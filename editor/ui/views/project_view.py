@@ -15,6 +15,7 @@ from ...core import search
 from .. import icons
 from ..find_in_files import apply_text_change
 from ..rename_dialog import RenameDialog, image_references
+from ..shortcuts import shortcut
 from .base import DockView
 
 
@@ -71,7 +72,7 @@ class ProjectView(DockView):
         self._tree.doubleClicked.connect(self._activate)
         for key, slot in (("F2", self.rename_current), ("Delete", self.delete_selected),
                           ("Return", self.open_selected), ("Enter", self.open_selected)):
-            QShortcut(QKeySequence(key), self._tree, slot, context=Qt.WidgetShortcut)
+            shortcut(key, self._tree, slot)
         self._stack.addWidget(self._empty)
         self._stack.addWidget(self._tree)
         bus = self.ctx.bus

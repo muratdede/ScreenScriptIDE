@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QLineF, QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QGraphicsPixmapItem,
+from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QGraphicsEllipseItem,
+                               QGraphicsItem, QGraphicsPixmapItem,
                                QGraphicsRectItem, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView,
                                QHBoxLayout, QInputDialog, QLabel, QMessageBox, QToolButton, QVBoxLayout,
                                QWidget)
 
-from screenscript import ImageLibrary, ImagePath, Pattern
+from screenscript import ImageLibrary, ImagePath, Key, Pattern
 
 from ...agent.context_factory import ContextFactory
 from .. import icons
@@ -28,10 +30,18 @@ def bgr_to_qimage(image: np.ndarray) -> QImage:
 
 
 class ScreenCanvas(QGraphicsView):
-    """Görüntüyü gösterir; sürükleyerek alan seçilir. Ctrl+tekerlek = yakınlaştır."""
+    """Görüntüyü gösterir; sürükleyerek alan seçilir. Ctrl+tekerlek = yakınlaştır.
+    Tıklayıcı modunda fare ve klavye cihaza girdi olarak gider: tık = dokunma, sürükle = kaydırma,
+    basılı tut = uzun basma, tekerlek = kaydırma, yazı/Enter/Backspace/Esc(=Geri) = tuşlar."""
 
     selection_changed = Signal(object)   # (x, y, w, h) ya da None
     hovered = Signal(int, int, object)   # x, y, (b, g, r) ya da None
+    # tıklayıcı modu (koordinatlar cihaz pikseli)
+    tapped = Signal(int, int)
+    swiped = Signal(int, int, int, int, int)   # x1, y1, x2, y2, süre ms
+    long_pressed = Signal(int, int, int)       # x, y, süre ms
+    text_typed = Signal(str)
+    key_sent = Signal(int, str)                # keycode, açıklama
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -46,6 +56,9 @@ class ScreenCanvas(QGraphicsView):
         self._selection: Optional[QGraphicsRectItem] = None
         self._origin: Optional[QPointF] = None
         self._overlays = []
+        self.clicker = False
+        self._press = None
+        self._trail = None
 
     @property
     def image(self) -> Optional[np.ndarray]:
@@ -105,6 +118,100 @@ class ScreenCanvas(QGraphicsView):
             self.scene().removeItem(item)
         self._overlays = []
 
+    # ---- tıklayıcı modu: fare/klavye -> cihaz girdisi ------------------- #
+    TAP_SLOP_PX = 8          # ekran pikseli; bundan az hareket = dokunma
+    LONG_PRESS_MS = 500
+
+    def set_clicker(self, on: bool) -> None:
+        self.clicker = on
+        self._press = None
+        self.viewport().setCursor(Qt.PointingHandCursor if on else Qt.ArrowCursor)
+        self.setFocusPolicy(Qt.StrongFocus if on else Qt.WheelFocus)
+        if on:
+            self.clear_selection()
+            self.setFocus()
+
+    def _device_point(self, pos) -> Tuple[int, int]:
+        p = self._clamped(pos)
+        h, w = self._image.shape[:2]
+        return min(int(p.x()), w - 1), min(int(p.y()), h - 1)
+
+    def _clicker_press(self, e) -> None:
+        self._press = (e.position().toPoint(), self._device_point(e.position().toPoint()), time.monotonic())
+        pen = QPen(QColor(95, 184, 101, 220), 3)
+        pen.setCosmetic(True)
+        self._trail = self.scene().addLine(QLineF(), pen)
+        self._trail.setZValue(6)
+
+    def _clicker_move(self, e) -> None:
+        if self._press and self._trail is not None:
+            x0, y0 = self._press[1]
+            x1, y1 = self._device_point(e.position().toPoint())
+            self._trail.setLine(QLineF(x0, y0, x1, y1))
+
+    def _clicker_release(self, e) -> None:
+        if not self._press:
+            return
+        view_start, (x0, y0), t0 = self._press
+        self._press = None
+        if self._trail is not None:
+            self.scene().removeItem(self._trail)
+            self._trail = None
+        x1, y1 = self._device_point(e.position().toPoint())
+        ms = int((time.monotonic() - t0) * 1000)
+        moved = (e.position().toPoint() - view_start).manhattanLength() > self.TAP_SLOP_PX
+        if moved:
+            self.swiped.emit(x0, y0, x1, y1, min(max(ms, 80), 3000))
+            self._ripple(x1, y1, QColor(95, 184, 101))
+        elif ms >= self.LONG_PRESS_MS:
+            self.long_pressed.emit(x0, y0, ms)
+            self._ripple(x0, y0, QColor(242, 197, 92))
+        else:
+            self.tapped.emit(x0, y0)
+            self._ripple(x0, y0, QColor(53, 116, 240))
+
+    def _ripple(self, x: int, y: int, color: QColor) -> None:
+        """Dokunulan yerde kısa süre görünen halka (sabit ekran boyutunda)."""
+        item = QGraphicsEllipseItem(-14, -14, 28, 28)
+        item.setFlag(QGraphicsItem.ItemIgnoresTransformations)
+        item.setPos(x, y)
+        item.setPen(QPen(color, 2))
+        fill = QColor(color)
+        fill.setAlpha(80)
+        item.setBrush(QBrush(fill))
+        item.setZValue(7)
+        self.scene().addItem(item)
+        steps = [0]
+
+        def fade():
+            steps[0] += 1
+            if steps[0] >= 10 or item.scene() is None:
+                timer.stop()
+                if item.scene() is not None:
+                    self.scene().removeItem(item)
+                return
+            item.setOpacity(1 - steps[0] / 10)
+            item.setScale(1 + steps[0] * 0.08)
+        timer = QTimer(self, interval=35)
+        timer.timeout.connect(fade)
+        timer.start()
+
+    def keyPressEvent(self, e):
+        if not self.clicker:
+            return super().keyPressEvent(e)
+        keys = {Qt.Key_Backspace: (Key.DEL, "Sil"), Qt.Key_Return: (Key.ENTER, "Enter"),
+                Qt.Key_Enter: (Key.ENTER, "Enter"), Qt.Key_Tab: (Key.TAB, "Tab"), Qt.Key_Escape: (Key.BACK, "Geri"),
+                Qt.Key_Home: (Key.HOME, "Ana ekran")}
+        if e.key() in keys:
+            self.key_sent.emit(int(keys[e.key()][0]), keys[e.key()][1])
+        elif e.text() and e.text().isprintable() and not (e.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
+            self.text_typed.emit(e.text())
+        else:
+            super().keyPressEvent(e)
+
+    def focusNextPrevChild(self, _next):
+        return not self.clicker and super().focusNextPrevChild(_next)   # Tab cihaza gitsin
+
     # ---- fare ------------------------------------------------------------ #
     def _clamped(self, pos) -> QPointF:
         p = self.mapToScene(pos)
@@ -112,6 +219,10 @@ class ScreenCanvas(QGraphicsView):
         return QPointF(min(max(p.x(), 0), r.width()), min(max(p.y(), 0), r.height()))
 
     def mousePressEvent(self, e):
+        if self.clicker and e.button() == Qt.LeftButton and self._image is not None:
+            self.setFocus()
+            self._clicker_press(e)
+            return
         if e.button() == Qt.LeftButton and self._image is not None:
             self._origin = self._clamped(e.position().toPoint())
             if self._selection is None:
@@ -129,11 +240,17 @@ class ScreenCanvas(QGraphicsView):
             h, w = self._image.shape[:2]
             color = tuple(int(c) for c in self._image[y, x]) if 0 <= x < w and 0 <= y < h else None
             self.hovered.emit(x, y, color)
+        if self.clicker:
+            self._clicker_move(e)
+            return
         if self._origin is not None and self._selection is not None:
             self._selection.setRect(QRectF(self._origin, p).normalized())
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
+        if self.clicker and e.button() == Qt.LeftButton:
+            self._clicker_release(e)
+            return
         if self._origin is not None:
             self._origin = None
             self.selection_changed.emit(self.selection())
@@ -143,6 +260,12 @@ class ScreenCanvas(QGraphicsView):
         if e.modifiers() & Qt.ControlModifier:
             factor = 1.25 if e.angleDelta().y() > 0 else 0.8
             self.scale(factor, factor)
+        elif self.clicker and self._image is not None:
+            # tekerlek = cihazda kaydırma (liste/ sayfa gezinme)
+            x, y = self._device_point(e.position().toPoint())
+            h = self._image.shape[0]
+            dy = int(h * 0.18) * (1 if e.angleDelta().y() > 0 else -1)
+            self.swiped.emit(x, y, x, min(max(y + dy, 0), h - 1), 200)
         else:
             super().wheelEvent(e)
 
@@ -184,6 +307,17 @@ class ScreenView(DockView):
         self._button(bar, "", "fit", "Görüntüyü pencereye sığdır", lambda: self._canvas.fit())
         self._button(bar, "", "actual", "Gerçek boyut (1:1)", lambda: self._canvas.actual_size())
         bar.addWidget(self._separator())
+        self._clicker_btn = self._button(bar, "Tıklayıcı", "pointer",
+                                         "Tıklayıcı modu: ekrana tıklayınca cihaza dokunma gönderilir, sürükle = "
+                                         "kaydır, basılı tut = uzun bas, tekerlek = kaydır, klavye = yazı", None)
+        self._clicker_btn.setCheckable(True)
+        self._clicker_btn.toggled.connect(self._set_clicker)
+        self._nav_buttons = [
+            self._button(bar, "", "back", "Geri (Esc)", lambda: self._send_key(Key.BACK, "Geri")),
+            self._button(bar, "", "home", "Ana ekran", lambda: self._send_key(Key.HOME, "Ana ekran")),
+            self._button(bar, "", "recents", "Son uygulamalar", lambda: self._send_key(Key.APP_SWITCH, "Son uygulamalar")),
+        ]
+        bar.addWidget(self._separator())
         self._save_btn = self._button(bar, "Görsel kaydet", "crop",
                                       "Seçili alanı images/ klasörüne PNG olarak kaydet", self._save_selection)
         self._region_btn = self._button(bar, "Region", "region",
@@ -215,6 +349,18 @@ class ScreenView(DockView):
         self._canvas = ScreenCanvas()
         self._canvas.selection_changed.connect(self._on_selection)
         self._canvas.hovered.connect(self._on_hover)
+        c, cfg = self._canvas, lambda: self.ctx.project.config
+        c.tapped.connect(lambda x, y: self._input(lambda: self.ctx.device_input.tap(cfg(), x, y)))
+        c.swiped.connect(lambda x1, y1, x2, y2, ms: self._input(
+            lambda: self.ctx.device_input.swipe(cfg(), x1, y1, x2, y2, ms)))
+        c.long_pressed.connect(lambda x, y, ms: self._input(lambda: self.ctx.device_input.long_press(cfg(), x, y, ms)))
+        c.key_sent.connect(self._send_key)
+        c.text_typed.connect(self._queue_text)
+        self._text_buffer = ""
+        self._text_timer = QTimer(self, singleShot=True, interval=150)   # hızlı yazılan harfleri tek komutta gönder
+        self._text_timer.timeout.connect(self._flush_text)
+        self.ctx.device_input.sent.connect(self._on_input_sent)
+        self.ctx.device_input.failed.connect(self._on_input_failed)
         layout.addWidget(self._canvas, 1)
 
         status = QHBoxLayout()
@@ -239,6 +385,7 @@ class ScreenView(DockView):
         self._failed = False
         self._on_selection(None)
         self._on_live_changed(False)
+        self._set_clicker(False)
         return w
 
     @staticmethod
@@ -247,7 +394,8 @@ class ScreenView(DockView):
         b.setIcon(icons.icon(icon_name))
         b.setToolTip(tip)
         b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon if text else Qt.ToolButtonIconOnly)
-        b.clicked.connect(slot)
+        if slot is not None:
+            b.clicked.connect(slot)
         layout.addWidget(b)
         return b
 
@@ -257,6 +405,47 @@ class ScreenView(DockView):
         line.setFixedSize(1, 16)
         line.setStyleSheet("background: #43454a;")
         return line
+
+    # ---- tıklayıcı modu -------------------------------------------------- #
+    def _set_clicker(self, on: bool) -> None:
+        if on and not self.ctx.project:
+            self._clicker_btn.setChecked(False)
+            return
+        self._canvas.set_clicker(on)
+        for b in self._nav_buttons:
+            b.setVisible(on)
+        for b in (self._save_btn, self._region_btn, self._loc_btn):
+            b.setVisible(not on)
+        if on:
+            if not self.ctx.grabber.is_live:
+                self.ctx.toggle_live_screen()     # sonucu görmek için canlı görüntü
+            self._pixel.setText("Tıklayıcı açık — girdiler cihaza gider")
+
+    def _input(self, send) -> None:
+        if self.ctx.project and self._canvas.clicker:
+            self._flush_text()
+            send()
+
+    def _send_key(self, keycode: int, label: str = "") -> None:
+        self._input(lambda: self.ctx.device_input.key(self.ctx.project.config, int(keycode), label))
+
+    def _queue_text(self, text: str) -> None:
+        self._text_buffer += text
+        self._text_timer.start()
+
+    def _flush_text(self) -> None:
+        self._text_timer.stop()
+        if self._text_buffer and self.ctx.project:
+            text, self._text_buffer = self._text_buffer, ""
+            self.ctx.device_input.text(self.ctx.project.config, text)
+
+    def _on_input_sent(self, label: str) -> None:
+        if self._canvas.clicker:
+            self._pixel.setText(f"→ {label}")
+
+    def _on_input_failed(self, message: str) -> None:
+        self._pixel.setText(f"<span style='color:#f07178'>Girdi gönderilemedi</span>")
+        self.ctx.bus.output.emit(f"Girdi gönderilemedi: {message}\n", "err")
 
     def _on_live_changed(self, live: bool) -> None:
         b = self._live_btn
@@ -326,6 +515,8 @@ class ScreenView(DockView):
             self._status.setText(f"Seçim: x={x} y={y} w={w} h={h}")
 
     def _on_hover(self, x, y, color):
+        if self._canvas.clicker:
+            return
         if color is not None:
             b, g, r = color
             self._pixel.setText(f"({x}, {y})  RGB({r}, {g}, {b})")

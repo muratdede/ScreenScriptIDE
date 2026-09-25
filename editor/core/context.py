@@ -6,7 +6,9 @@ from typing import List, Optional
 
 from PySide6.QtCore import QObject, QSettings
 
+from .app_settings import create_ide_settings, move_session_files
 from .breakpoints import BreakpointStore
+from .device_input import DeviceInput
 from .completion import FallbackCompletionProvider, create_default_provider
 from .events import EventBus
 from .grabber import ScreenGrabber
@@ -39,11 +41,13 @@ class EditorContext(QObject):
     def __init__(self, install_root: str, parent=None):
         super().__init__(parent)
         self.install_root = install_root
-        self.settings = QSettings("ScreenScript", "IDE")
+        self.settings: QSettings = create_ide_settings()   # %LOCALAPPDATA%\ScreenScript\ide.ini
+        move_session_files(install_root)                    # oturum dosyaları çalışma alanında kalmasın
         self.bus = EventBus(self)
         self.breakpoints = BreakpointStore(self)
         self.session = ScriptSession(install_root, parent=self)
         self.grabber = ScreenGrabber(self)
+        self.device_input = DeviceInput(self)   # Ekran view'ındaki tıklayıcı modu
         self.images = ImageRepository(self)
         self.completion: FallbackCompletionProvider = create_default_provider(None, [install_root])
         self.project: Optional[Project] = None

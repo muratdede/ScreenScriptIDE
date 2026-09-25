@@ -1,13 +1,18 @@
-"""Proje ayarları penceresi."""
+"""Ayar pencereleri: uygulama ayarları (tüm projeler için ortak) ve proje ayarları."""
 
 from __future__ import annotations
 
 import os
 
+import threading
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
-                               QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLineEdit,
+                               QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                                QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
+from ..core import app_settings
+from ..core.app_settings import AppConfig
 from ..core.project import Project, ProjectConfig
 
 
@@ -26,8 +31,10 @@ class ProjectSettingsDialog(QDialog):
         self.adb.setPlaceholderText("Boş = otomatik bul (PATH / BlueStacks HD-Adb.exe)")
         adb_row = self._with_button(self.adb, "Gözat…", self._browse_adb)
         self.fmt = QComboBox()
-        self.fmt.addItems(["raw", "png"])
-        self.fmt.setCurrentText(c.screencap_format)
+        self.fmt.addItem("stream — H.264 akışı (hızlı, ~35 FPS)", "stream")
+        self.fmt.addItem("raw — screencap (yavaş, ~3 FPS)", "raw")
+        self.fmt.addItem("png — screencap PNG", "png")
+        self.fmt.setCurrentIndex(max(0, self.fmt.findData(c.screencap_format)))
 
         # eşleştirme
         self.similarity = QDoubleSpinBox(minimum=0.1, maximum=1.0, singleStep=0.05, decimals=2, value=c.similarity)
@@ -50,13 +57,6 @@ class ProjectSettingsDialog(QDialog):
         self.args.setPlaceholderText("anahtar=değer (her satıra bir tane) — script'te ARGS['anahtar']")
         self.args.setMaximumHeight(90)
 
-        # bildirim
-        self.tg_token = QLineEdit(c.telegram_token)
-        self.tg_token.setEchoMode(QLineEdit.PasswordEchoOnEdit)
-        self.tg_token.setPlaceholderText("BotFather token'ı (boş = TELEGRAM_BOT_TOKEN ortam değişkeni)")
-        self.tg_user = QLineEdit(c.telegram_username)
-        self.tg_user.setPlaceholderText("@kullanici — kişi bota bir kez Start demiş olmalı")
-
         layout = QVBoxLayout(self)
         layout.addWidget(self._group("Cihaz bağlantısı", [
             ("Host", self.host), ("Port", self.port), ("adb yolu", adb_row), ("Yakalama formatı", self.fmt)]))
@@ -66,8 +66,9 @@ class ProjectSettingsDialog(QDialog):
         layout.addWidget(self._group("Çalıştırma", [
             ("Ana script", main_row), ("Görsel klasörleri", self.image_dirs), ("", self.dry_run),
             ("", self.humanize), ("", self.background), ("", self.save_on_fail), ("Script argümanları", self.args)]))
-        layout.addWidget(self._group("Bildirim (Telegram) — push_notification()", [
-            ("Bot token", self.tg_token), ("Kullanıcı adı", self.tg_user)]))
+        note = QLabel("Telegram bildirim ayarları uygulama ayarlarındadır (Ayarlar, Ctrl+Alt+S).")
+        note.setObjectName("hint")
+        layout.addWidget(note)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -108,7 +109,7 @@ class ProjectSettingsDialog(QDialog):
         c.host = self.host.text().strip() or "127.0.0.1"
         c.port = self.port.value()
         c.adb_path = self.adb.text().strip()
-        c.screencap_format = self.fmt.currentText()
+        c.screencap_format = self.fmt.currentData()
         c.similarity = round(self.similarity.value(), 2)
         c.timeout = self.timeout.value()
         c.scan_rate = self.scan_rate.value()
@@ -127,5 +128,93 @@ class ProjectSettingsDialog(QDialog):
                 if k.strip():
                     args[k.strip()] = v.strip()
         c.script_args = args
-        c.telegram_token = self.tg_token.text().strip()
-        c.telegram_username = self.tg_user.text().strip()
+
+
+class AppSettingsDialog(QDialog):
+    """Uygulama ayarları: %LOCALAPPDATA%\\ScreenScript\\settings.json. Tüm projelerde geçerlidir."""
+
+    _test_done = Signal(bool, str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ayarlar")
+        self.setMinimumWidth(560)
+        self._config = AppConfig.load()
+        c = self._config
+
+        self.tg_token = QLineEdit(c.telegram_token)
+        self.tg_token.setEchoMode(QLineEdit.PasswordEchoOnEdit)
+        self.tg_token.setPlaceholderText("BotFather token'ı (boş = TELEGRAM_BOT_TOKEN ortam değişkeni)")
+        self.tg_user = QLineEdit(c.telegram_username)
+        self.tg_user.setPlaceholderText("@kullanici — kişi bota bir kez Start demiş olmalı")
+        self._test_btn = QPushButton("Test mesajı gönder")
+        self._test_btn.clicked.connect(self._send_test)
+        self._test_result = QLabel()
+        self._test_result.setWordWrap(True)
+        self._test_done.connect(self._on_test_done)
+        test_row = QWidget()
+        tr = QHBoxLayout(test_row)
+        tr.setContentsMargins(0, 0, 0, 0)
+        tr.addWidget(self._test_btn)
+        tr.addWidget(self._test_result, 1)
+
+        folder = app_settings.app_data_dir()
+        path_label = QLabel(folder)
+        path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        path_label.setObjectName("hint")
+        open_btn = QPushButton("Klasörü aç")
+        open_btn.clicked.connect(lambda: app_settings.open_in_file_manager(folder))
+        folder_row = QWidget()
+        fr = QHBoxLayout(folder_row)
+        fr.setContentsMargins(0, 0, 0, 0)
+        fr.addWidget(path_label, 1)
+        fr.addWidget(open_btn)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(ProjectSettingsDialog._group("Bildirim (Telegram) — push_notification()", [
+            ("Bot token", self.tg_token), ("Kullanıcı adı", self.tg_user), ("", test_row)]))
+        layout.addWidget(ProjectSettingsDialog._group("Ayar klasörü", [
+            ("", folder_row),
+            ("", self._hint("IDE durumu (ide.ini), uygulama ayarları (settings.json), Telegram önbelleği "
+                            "ve oturum dosyaları (*.session) burada tutulur; proje klasörlerine yazılmaz."))]))
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    @staticmethod
+    def _hint(text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("hint")
+        label.setWordWrap(True)
+        return label
+
+    def _current(self) -> AppConfig:
+        return AppConfig(telegram_token=self.tg_token.text().strip(),
+                         telegram_username=self.tg_user.text().strip())
+
+    def apply(self) -> None:
+        self._current().save()
+
+    def _send_test(self) -> None:
+        cfg = self._current()
+        token, user = cfg.effective_telegram_token(), cfg.telegram_username
+        if not token or not user:
+            self._on_test_done(False, "Token ve kullanıcı adı gerekli.")
+            return
+        self._test_btn.setEnabled(False)
+        self._test_result.setText("Gönderiliyor…")
+
+        def work():
+            from screenscript import TelegramNotifier
+            try:
+                TelegramNotifier(token, user, cache_path=app_settings.telegram_cache_path()) \
+                    .send_text("ScreenScript IDE: test bildirimi ✔")
+                self._test_done.emit(True, "Gönderildi.")
+            except Exception as e:  # noqa: BLE001
+                self._test_done.emit(False, str(e))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_test_done(self, ok: bool, message: str) -> None:
+        self._test_btn.setEnabled(True)
+        self._test_result.setText(f"<span style='color:{'#5fb865' if ok else '#db5c5c'}'>{message}</span>")

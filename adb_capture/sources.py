@@ -49,6 +49,7 @@ class FrameSource(ABC):
 class ScreencapFormat(Enum):
     RAW = "raw"   # Sıkıştırmasız RGBA — cihazda PNG kodlaması yok, genelde 2-3 kat daha hızlı
     PNG = "png"   # Daha az veri aktarılır ama cihazda kodlama yavaş
+    STREAM = "stream"   # screenrecord H.264 akışı (stream.AdbStreamSource) — 1080p'de ~35 FPS
 
 
 class AdbScreencapSource(FrameSource):

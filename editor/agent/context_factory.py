@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import os
-
 from adb_capture import ScreencapFormat
 from screenscript import (ContextBuilder, HumanizedInputDriver, MultiScaleMatcher, ScriptContext,
                           Settings, TelegramNotifier, TemplateMatcher)
 
+from ..core.app_settings import AppConfig, telegram_cache_path
 from ..core.project import Project, ProjectConfig
 
 
@@ -55,8 +54,8 @@ class ContextFactory:
     def configure_notifier(self, builder: ContextBuilder) -> None:
         """Token ve kullanıcı adı varsa push_notification Telegram'a gider; yoksa script
         push_notification çağırdığında NotificationError alır."""
-        c = self._project.config
-        token = c.telegram_token.strip() or os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-        if token and c.telegram_username.strip():
-            builder.with_notifier(TelegramNotifier(token, c.telegram_username,
-                                                   cache_path=self._project.telegram_cache_path))
+        app = AppConfig.load()   # uygulama ayarı (%LOCALAPPDATA%\ScreenScript\settings.json)
+        token = app.effective_telegram_token()
+        if token and app.telegram_username.strip():
+            builder.with_notifier(TelegramNotifier(token, app.telegram_username,
+                                                   cache_path=telegram_cache_path()))

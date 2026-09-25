@@ -31,7 +31,7 @@ class ProjectConfig:
     host: str = "127.0.0.1"
     port: int = 5555
     adb_path: str = ""
-    screencap_format: str = "raw"
+    screencap_format: str = "stream"   # stream (H.264, hızlı) | raw | png
     similarity: float = 0.7
     timeout: float = 3.0
     scan_rate: float = 3.0
@@ -46,10 +46,7 @@ class ProjectConfig:
     main_script: str = "main.py"
     script_args: Dict[str, str] = field(default_factory=dict)
     image_dirs: List[str] = field(default_factory=lambda: ["images"])
-    # push_notification: Telegram bot token'ı (boşsa TELEGRAM_BOT_TOKEN ortam değişkeni) ve
-    # bildirim alacak kullanıcı adı. Kullanıcının bota bir kez Start demiş olması gerekir.
-    telegram_token: str = ""
-    telegram_username: str = ""
+    # Not: Telegram ayarları proje değil uygulama ayarıdır (core/app_settings.AppConfig).
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -78,7 +75,6 @@ class ProjectConfig:
 
 class Project:
     CONFIG_FILE = ".screenscript.json"
-    TELEGRAM_CACHE_FILE = ".telegram_chats.json"
     IMAGES_DIR = "images"
 
     def __init__(self, root: str, config: Optional[ProjectConfig] = None):
@@ -93,10 +89,16 @@ class Project:
             raise FileNotFoundError(f"Klasör yok: {root}")
         path = os.path.join(root, cls.CONFIG_FILE)
         config = ProjectConfig()
+        raw = None
         if os.path.isfile(path):
             with open(path, encoding="utf-8") as f:
-                config = ProjectConfig.from_dict(json.load(f))
+                raw = json.load(f)
+            config = ProjectConfig.from_dict(raw)
         project = cls(root, config)
+        # eski sürümlerin proje klasöründe bıraktığı gizli bilgileri uygulama klasörüne taşı
+        from .app_settings import migrate_project
+        if migrate_project(root, raw or {}):
+            project.save()
         project.ensure_layout()
         return project
 
@@ -125,10 +127,6 @@ class Project:
     @property
     def config_path(self) -> str:
         return os.path.join(self._root, self.CONFIG_FILE)
-
-    @property
-    def telegram_cache_path(self) -> str:
-        return os.path.join(self._root, self.TELEGRAM_CACHE_FILE)
 
     @property
     def images_dir(self) -> str:

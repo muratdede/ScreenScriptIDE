@@ -181,7 +181,8 @@ class MainWindow(QMainWindow):
         A("save_all", "Tümünü Kaydet", self.tabs.save_all, "Ctrl+Shift+S")
         A("close_tab", "Sekmeyi Kapat", lambda: self.tabs.close_tab(self.tabs.currentIndex()), "Ctrl+W")
         A("quit", "Çıkış", self.close, "Ctrl+Q")
-        A("settings", "Proje Ayarları…", self.edit_settings, "Ctrl+Alt+S", icon="settings")
+        A("settings", "Proje Ayarları…", self.edit_settings, "Ctrl+Alt+Shift+S")
+        A("app_settings", "Ayarlar…", self.edit_app_settings, "Ctrl+Alt+S", icon="settings")
         A("grab", "Ekranı Canlı Yakala / Durdur", self.ctx.toggle_live_screen, "Ctrl+Shift+G", icon="camera")
         A("grab_once", "Tek Kare Yakala", self.ctx.grab_screen, icon="refresh")
 
@@ -224,6 +225,8 @@ class MainWindow(QMainWindow):
         self._recent_menu.aboutToShow.connect(lambda: self._fill_recent(self._recent_menu))
         m.addSeparator()
         m.addActions([a["save"], a["save_all"], a["close_tab"]])
+        m.addSeparator()
+        m.addActions([a["app_settings"], a["settings"]])
         m.addSeparator()
         m.addAction(a["quit"])
 
@@ -322,7 +325,7 @@ class MainWindow(QMainWindow):
         self._live_btn = QToolButton()
         self._live_btn.setDefaultAction(a["grab"])
         tb.addWidget(self._live_btn)
-        tb.addAction(a["settings"])
+        tb.addAction(a["app_settings"])
         self.addToolBar(Qt.TopToolBarArea, tb)
 
     def _create_stripes(self) -> None:
@@ -525,6 +528,13 @@ class MainWindow(QMainWindow):
         if dialog.exec():
             dialog.apply()
             self.ctx.save_project_config()
+
+    def edit_app_settings(self) -> None:
+        from .dialogs import AppSettingsDialog
+        dialog = AppSettingsDialog(self)
+        if dialog.exec():
+            dialog.apply()
+            self.statusBar().showMessage("Ayarlar kaydedildi", 3000)
 
     def goto_line(self) -> None:
         editor = self.tabs.current_editor()

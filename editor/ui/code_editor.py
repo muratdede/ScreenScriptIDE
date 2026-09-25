@@ -143,6 +143,8 @@ class CodeEditor(QPlainTextEdit):
         self._ctx = ctx
         self._debug_line = 0
         self._find_bar = None   # bul/değiştir çubuğu (ilk Ctrl+F'de oluşturulur)
+        self._carets: List[QTextCursor] = []   # çoklu imleç modu (boş = normal)
+        self._multi_typing = False
 
         self.setFont(THEME.code_font())
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
@@ -184,6 +186,10 @@ class CodeEditor(QPlainTextEdit):
         self._find_timer = QTimer(self, singleShot=True, interval=150)
         self._find_timer.timeout.connect(lambda: self.find_update(select=False))
         self.document().contentsChanged.connect(self._on_contents_for_find)
+
+        # çoklu imleç: orta tuşla / Alt ile sürükleyerek sütun seçimi, Alt+Shift+tık ile imleç ekleme
+        self._column_anchor: Optional[QPoint] = None
+        self.setCursorWidth(2)
 
         # Ctrl+tık ile tanıma git: Ctrl basılıyken imlecin altındaki isim bağlantı gibi çizilir
         self._link: Optional[Tuple[int, int]] = None
@@ -329,6 +335,12 @@ class CodeEditor(QPlainTextEdit):
                 sel.format.setBackground(THEME.find_match)
                 sel.cursor = self._range_cursor(start, end)
                 selections.append(sel)
+        for c in self._carets[:-1]:   # birincil imlecin seçimini Qt çizer
+            if c.hasSelection():
+                sel = QTextEdit.ExtraSelection()
+                sel.format.setBackground(THEME.selection)
+                sel.cursor = QTextCursor(c)
+                selections.append(sel)
         if self._link:
             link = QTextEdit.ExtraSelection()
             link.format.setForeground(QColor("#548af7"))
@@ -349,6 +361,7 @@ class CodeEditor(QPlainTextEdit):
 
     def show_find(self, replace: bool = False) -> None:
         from .find_bar import FindBar
+        self.exit_multi_caret()
         if self._find_bar is None:
             self._find_bar = FindBar(self)
         bar = self._find_bar
@@ -538,6 +551,9 @@ class CodeEditor(QPlainTextEdit):
             self._update_extra_selections()
 
     def mouseMoveEvent(self, e):
+        if self._column_anchor is not None:
+            self._build_column_carets(self._column_anchor, e.position().toPoint())
+            return
         if e.modifiers() & Qt.ControlModifier and not e.buttons():
             self._set_link(self._link_range_at(e.position().toPoint()))
         elif self._link:
@@ -545,13 +561,202 @@ class CodeEditor(QPlainTextEdit):
         super().mouseMoveEvent(e)
 
     def mousePressEvent(self, e):
-        if e.button() == Qt.LeftButton and e.modifiers() & Qt.ControlModifier:
-            rng = self._link_range_at(e.position().toPoint())
+        mods = e.modifiers()
+        pos = e.position().toPoint()
+        if e.button() == Qt.LeftButton and mods & Qt.ControlModifier and not mods & Qt.AltModifier:
+            rng = self._link_range_at(pos)
             if rng:
                 self._set_link(None)
                 self.go_to_definition(rng[0], e.globalPosition().toPoint())
                 return
+        # orta tuş ya da Alt+sürükle: sütun (blok) seçimi -> çoklu imleç
+        if e.button() == Qt.MiddleButton or (e.button() == Qt.LeftButton and mods == Qt.AltModifier):
+            self.setFocus()
+            self._column_anchor = pos
+            self._build_column_carets(pos, pos)
+            return
+        # Alt+Shift+tık: imleç ekle / kaldır
+        if e.button() == Qt.LeftButton and mods == (Qt.AltModifier | Qt.ShiftModifier):
+            self._toggle_caret_at(pos)
+            return
+        if self._carets:
+            self.exit_multi_caret()
         super().mousePressEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        if self._column_anchor is not None:
+            self._column_anchor = None
+            if len(self._carets) <= 1:   # tek satır: normal seçime dön
+                single = self._carets[0] if self._carets else None
+                self.exit_multi_caret()
+                if single is not None:
+                    self.setTextCursor(single)
+            return
+        super().mouseReleaseEvent(e)
+
+    # ---- çoklu imleç (orta tuş / Alt ile sütun seçimi) --------------------- #
+    @property
+    def multi_caret(self) -> bool:
+        return len(self._carets) > 1
+
+    def _block_center_y(self, block) -> int:
+        geo = self.blockBoundingGeometry(block).translated(self.contentOffset())
+        return int(geo.top() + self.fontMetrics().height() / 2)
+
+    def _build_column_carets(self, p1: QPoint, p2: QPoint) -> None:
+        """p1-p2 dikdörtgenindeki her satır için bir imleç (kısa satırlarda satır sonunda)."""
+        self._multi_typing = False
+        doc = self.document()
+        b1 = self.cursorForPosition(QPoint(0, p1.y())).block()
+        b2 = self.cursorForPosition(QPoint(0, p2.y())).block()
+        step_down = b2.blockNumber() >= b1.blockNumber()
+        x1, x2 = max(0, p1.x()), max(0, p2.x())
+        carets = []
+        block = b1
+        while block.isValid():
+            y = self._block_center_y(block)
+            c = QTextCursor(doc)
+            c.setPosition(self._block_pos_at_x(block, x1, y))
+            c.setPosition(self._block_pos_at_x(block, x2, y), QTextCursor.KeepAnchor)
+            carets.append(c)
+            if block == b2:
+                break
+            block = block.next() if step_down else block.previous()
+        self._set_carets(carets)
+
+    def _block_pos_at_x(self, block, x: int, y: int) -> int:
+        pos = self.cursorForPosition(QPoint(x, y))
+        if pos.block() != block:   # görünür alan dışındaki satırlar: sütunu satır içinde hesapla
+            col = round(x / max(1, self.fontMetrics().horizontalAdvance(" ")))
+            return block.position() + min(col, len(block.text()))
+        return pos.position()
+
+    def _toggle_caret_at(self, pos: QPoint) -> None:
+        new = self.cursorForPosition(pos)
+        carets = self._carets or [QTextCursor(self.textCursor())]
+        kept = [c for c in carets if c.position() != new.position()]
+        if len(kept) == len(carets):
+            kept.append(new)
+        self._set_carets(kept or [new])
+
+    def _set_carets(self, carets: List[QTextCursor]) -> None:
+        unique, seen = [], set()
+        for c in carets:
+            key = (c.anchor(), c.position())
+            if key not in seen:
+                seen.add(key)
+                unique.append(c)
+        self._carets = unique
+        if unique:
+            self.setTextCursor(QTextCursor(unique[-1]))   # birincil imleç (kaydırma bunu izler)
+        self._update_extra_selections()
+        self.viewport().update()
+
+    def exit_multi_caret(self) -> None:
+        self._multi_typing = False
+        if self._carets:
+            self._carets = []
+            self._update_extra_selections()
+            self.viewport().update()
+
+    def _multi_edit(self, fn, typing: bool = False) -> None:
+        """fn(cursor, index) her imlece uygulanır; tek geri alma adımıdır. Art arda yazılan
+        karakterler (typing=True) normal editördeki gibi tek adımda birleşir."""
+        ordered = sorted(self._carets, key=lambda c: c.position())
+        edit = QTextCursor(self.document())
+        if typing and self._multi_typing:
+            edit.joinPreviousEditBlock()
+        else:
+            edit.beginEditBlock()
+        self._multi_typing = typing
+        for i, c in enumerate(ordered):
+            fn(c, i)
+        edit.endEditBlock()
+        self._set_carets(self._carets)
+
+    def _multi_key(self, e) -> bool:
+        """Çoklu imleç modunda tuşu işler; işlenmediyse False (normal davranış)."""
+        key, mods = e.key(), e.modifiers()
+        ctrl, shift = bool(mods & Qt.ControlModifier), bool(mods & Qt.ShiftModifier)
+        alt = bool(mods & Qt.AltModifier)
+        if key == Qt.Key_Escape or key in (Qt.Key_Return, Qt.Key_Enter) or \
+                (ctrl and key in (Qt.Key_Z, Qt.Key_Y, Qt.Key_A)):
+            self.exit_multi_caret()
+            return key == Qt.Key_Escape
+        if ctrl and key == Qt.Key_C:
+            self._multi_copy()
+            return True
+        if ctrl and key == Qt.Key_X:
+            self._multi_copy()
+            self._multi_edit(lambda c, _i: c.removeSelectedText())
+            return True
+        if ctrl and key == Qt.Key_V:
+            self._multi_paste()
+            return True
+        if key == Qt.Key_Backspace:
+            def back(c, _i):
+                if c.hasSelection():
+                    c.removeSelectedText()
+                elif c.positionInBlock() > 0:   # satır başında satırları birleştirme
+                    if ctrl:
+                        c.movePosition(QTextCursor.PreviousWord, QTextCursor.KeepAnchor)
+                        c.removeSelectedText()
+                    else:
+                        c.deletePreviousChar()
+            self._multi_edit(back)
+            return True
+        if key == Qt.Key_Delete:
+            def delete(c, _i):
+                if c.hasSelection():
+                    c.removeSelectedText()
+                elif not c.atBlockEnd():
+                    c.deleteChar()
+            self._multi_edit(delete)
+            return True
+        moves = {Qt.Key_Left: QTextCursor.PreviousWord if ctrl else QTextCursor.Left,
+                 Qt.Key_Right: QTextCursor.NextWord if ctrl else QTextCursor.Right,
+                 Qt.Key_Home: QTextCursor.StartOfLine, Qt.Key_End: QTextCursor.EndOfLine,
+                 Qt.Key_Up: QTextCursor.Up, Qt.Key_Down: QTextCursor.Down}
+        if key in moves:
+            self._multi_typing = False
+            mode = QTextCursor.KeepAnchor if shift else QTextCursor.MoveAnchor
+            for c in self._carets:
+                if not shift and c.hasSelection() and key in (Qt.Key_Left, Qt.Key_Right):
+                    c.setPosition(c.selectionStart() if key == Qt.Key_Left else c.selectionEnd())
+                else:
+                    c.movePosition(moves[key], mode)
+            self._set_carets(self._carets)
+            return True
+        if key == Qt.Key_Tab and not mods:
+            self._multi_edit(lambda c, _i: c.insertText(INDENT))
+            return True
+        text = e.text()
+        # AltGr (Ctrl+Alt) ile yazılan karakterler (@, {, [ ...) de metindir
+        if text and text.isprintable() and (not ctrl or alt):
+            self._multi_edit(lambda c, _i: c.insertText(text), typing=True)
+            return True
+        return False
+
+    def _multi_copy(self) -> None:
+        ordered = sorted(self._carets, key=lambda c: c.position())
+        QGuiApplication.clipboard().setText("\n".join(c.selectedText().replace(" ", "\n") for c in ordered))
+
+    def _multi_paste(self) -> None:
+        clip = QGuiApplication.clipboard().text()
+        lines = clip.split("\n")
+        if lines and lines[-1] == "" and len(lines) > 1:
+            lines.pop()
+        per_line = len(lines) == len(self._carets)   # satır sayısı imleç sayısına eşitse her satıra biri
+        self._multi_edit(lambda c, i: c.insertText(lines[i] if per_line else clip))
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if len(self._carets) > 1:
+            p = QPainter(self.viewport())
+            for c in self._carets[:-1]:   # birincil imleci Qt çizer
+                r = self.cursorRect(c)
+                p.fillRect(QRect(r.x(), r.y(), 2, r.height()), THEME.text)
+            p.end()
 
     def keyReleaseEvent(self, e):
         if e.key() == Qt.Key_Control:
@@ -597,6 +802,8 @@ class CodeEditor(QPlainTextEdit):
     def keyPressEvent(self, event):
         popup = self._completer.popup()
         key, mods = event.key(), event.modifiers()
+        if self._carets and self._multi_key(event):
+            return
 
         if popup.isVisible() and key in (Qt.Key_Enter, Qt.Key_Return, Qt.Key_Escape, Qt.Key_Tab, Qt.Key_Backtab):
             if key == Qt.Key_Tab and popup.currentIndex().isValid():

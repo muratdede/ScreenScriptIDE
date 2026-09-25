@@ -82,6 +82,10 @@ _ICONS = {
               'v1.7c0 1.2-1 2.2-2.2 2.2h-3c-1 0-1.8.8-1.8 1.8v2c0 1 .9 2.1 4 2.1z" fill="{c}" stroke="none" '
               'opacity=".7"/>',
     "add": '<path d="M8 3v10M3 8h10"/>',
+    "pointer": '<path d="M3.5 2.2l9.3 5.4-4 1.1 2.4 4.3-1.7 1-2.4-4.3-3 2.9z"/>',
+    "back": '<path d="M5.5 4L2 7.5 5.5 11"/><path d="M2 7.5h7.5a4 4 0 0 1 0 8H8"/>',
+    "home": '<path d="M2.5 7.5L8 2.5l5.5 5V14h-4v-4h-3v4h-4z"/>',
+    "recents": '<rect x="2.5" y="4.5" width="8" height="9" rx="1"/><path d="M5.5 2.5h7a1 1 0 0 1 1 1v8"/>',
     "eval": '<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M5 6.5h2.5M6.25 5.25v2.5M9 6.5h2.5'
             'M5 10h2.5M9 9.3h2.5M9 10.7h2.5"/>',
 }
