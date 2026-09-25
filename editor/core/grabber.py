@@ -64,18 +64,21 @@ class ScreenGrabber(QObject):
         self._set_busy(True)
         threading.Thread(target=self._work_once, args=(config,), daemon=True).start()
 
+    def capture(self, config: AppConfig):
+        """Tek kareyi eşzamanlı döndürür (sinyal yaymaz; arka plan thread'lerinden çağrılır)."""
+        stream = self._stream
+        if stream is not None and stream.streaming and self._stream_key == self._key(config):
+            return stream.grab()   # akış zaten açık: son kare anında
+        # tek kare için akış açmaya (~2 sn) değmez; screencap
+        fmt = ScreencapFormat(config.screencap_format)
+        source = AdbScreencapSource(self._get_device(config),
+                                    ScreencapFormat.RAW if fmt is ScreencapFormat.STREAM else fmt)
+        source.open()
+        return source.grab()
+
     def _work_once(self, config: AppConfig) -> None:
         try:
-            stream = self._stream
-            if stream is not None and stream.streaming and self._stream_key == self._key(config):
-                self._push(stream.grab())   # akış zaten açık: son kare anında
-            else:
-                # tek kare için akış açmaya (~2 sn) değmez; screencap
-                fmt = ScreencapFormat(config.screencap_format)
-                source = AdbScreencapSource(self._get_device(config),
-                                            ScreencapFormat.RAW if fmt is ScreencapFormat.STREAM else fmt)
-                source.open()
-                self._push(source.grab())
+            self._push(self.capture(config))
         except Exception as e:  # noqa: BLE001
             self._device = None
             self.failed.emit(str(e))

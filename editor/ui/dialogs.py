@@ -132,6 +132,8 @@ class AppSettingsDialog(QDialog):
         self.tg_token.setPlaceholderText("BotFather token'ı (boş = TELEGRAM_BOT_TOKEN ortam değişkeni)")
         self.tg_user = QLineEdit(c.telegram_username)
         self.tg_user.setPlaceholderText("@kullanici — kişi bota bir kez Start demiş olmalı")
+        self.tg_commands = QCheckBox("Editör açıkken bot komutlarını yanıtla (/capture: ekran görüntüsü gönder)",
+                                     checked=c.telegram_commands)
         self._test_btn = QPushButton("Test mesajı gönder")
         self._test_btn.clicked.connect(self._send_test)
         self._test_result = QLabel()
@@ -160,7 +162,7 @@ class AppSettingsDialog(QDialog):
             ("Host", self.host), ("Port", self.port), ("adb yolu", adb_row), ("Yakalama formatı", self.fmt),
             ("", self.background)]))
         layout.addWidget(ProjectSettingsDialog._group("Bildirim (Telegram) — push_notification()", [
-            ("Bot token", self.tg_token), ("Kullanıcı adı", self.tg_user), ("", test_row)]))
+            ("Bot token", self.tg_token), ("Kullanıcı adı", self.tg_user), ("", self.tg_commands), ("", test_row)]))
         layout.addWidget(ProjectSettingsDialog._group("Ayar klasörü", [
             ("", folder_row),
             ("", self._hint("IDE durumu (ide.ini), uygulama ayarları (settings.json), Telegram önbelleği "
@@ -193,7 +195,8 @@ class AppSettingsDialog(QDialog):
             screencap_format=self.fmt.currentData(),
             background=self.background.isChecked(),
             telegram_token=self.tg_token.text().strip(),
-            telegram_username=self.tg_user.text().strip())
+            telegram_username=self.tg_user.text().strip(),
+            telegram_commands=self.tg_commands.isChecked())
 
     def _send_test(self) -> None:
         cfg = self.result_config()

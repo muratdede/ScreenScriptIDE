@@ -575,6 +575,7 @@ class MainWindow(QMainWindow):
         if not self.tabs.close_all():
             event.ignore()
             return
+        self.ctx.telegram.stop()
         self.ctx.grabber.shutdown()   # screenrecord süreçleri de kapansın
         self.ctx.settings.setValue("window/geometry", self.saveGeometry())
         self.ctx.settings.setValue("window/state", self.saveState(self.STATE_VERSION))

@@ -15,6 +15,7 @@ from .grabber import ScreenGrabber
 from .image_repository import ImageRepository
 from .project import Project
 from .session import ScriptSession
+from .telegram_bot import TelegramCommandService
 
 
 class DocumentService:
@@ -50,6 +51,7 @@ class EditorContext(QObject):
         self.grabber = ScreenGrabber(self)
         self.device_input = DeviceInput(self)   # Ekran view'ındaki tıklayıcı modu
         self.images = ImageRepository(self)
+        self.telegram = TelegramCommandService(self.grabber, self)   # bota gelen /capture komutları
         self.completion: FallbackCompletionProvider = create_default_provider(None, [install_root])
         self.project: Optional[Project] = None
         self.documents: Optional[DocumentService] = None
@@ -58,6 +60,9 @@ class EditorContext(QObject):
         self.grabber.failed.connect(self.bus.screenshot_failed)
         # Görsel kaydeden/silen her bileşen images_changed yayar -> depo hemen tazelenir
         self.bus.images_changed.connect(lambda: self.images.refresh())
+        self.telegram.message.connect(self.bus.status_message)
+        self.bus.app_config_changed.connect(self.telegram.apply_config)
+        self.telegram.apply_config(self.app_config)
 
     # ---- proje ----------------------------------------------------------- #
     def open_project(self, root: str) -> Project:

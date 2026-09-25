@@ -63,6 +63,7 @@ class AppConfig:
     # bildirim alacak kullanıcı adı. Kullanıcının bota bir kez Start demiş olması gerekir.
     telegram_token: str = ""
     telegram_username: str = ""
+    telegram_commands: bool = True     # editör açıkken bota gelen /capture gibi komutları yanıtla
 
     FILE = "settings.json"
 

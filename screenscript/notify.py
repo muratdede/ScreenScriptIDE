@@ -129,6 +129,13 @@ class TelegramNotifier(Notifier):
         if rest:
             self.send_text(rest)
 
+    def get_updates(self, offset: int = 0, timeout: int = 0) -> list:
+        """getUpdates (long polling). timeout > 0 ise bağlantı zaman aşımı bundan uzun olmalıdır."""
+        fields: Dict[str, Any] = {"timeout": timeout, "allowed_updates": '["message"]'}
+        if offset:
+            fields["offset"] = offset
+        return self._call("getUpdates", fields) or []
+
     # ---- chat_id çözümleme ---------------------------------------------- #
     def chat_id(self) -> int:
         with self._lock:
@@ -168,6 +175,14 @@ class TelegramNotifier(Notifier):
                 if chat and chat.get("type") == "private" and user.get("username"):
                     out[user["username"].lower()] = chat["id"]
         return out
+
+    def remember_chat(self, username: str, chat_id: int) -> None:
+        """Bulunan chat_id'yi önbelleğe yazar (getUpdates'i başkası tüketiyorsa çözümleme buradan yapılır)."""
+        cache = self._load_cache()
+        key = username.strip().lstrip("@").lower()
+        if cache.get(key) != chat_id:
+            cache[key] = chat_id
+            self._save_cache(cache)
 
     def _load_cache(self) -> Dict[str, int]:
         if not self._cache_path or not os.path.isfile(self._cache_path):
