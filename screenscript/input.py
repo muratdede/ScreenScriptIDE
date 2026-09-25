@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import random
 import time
 from abc import ABC, abstractmethod
@@ -11,8 +10,6 @@ from enum import IntEnum
 from adb_capture import AdbDevice
 
 from .geometry import Location
-
-log = logging.getLogger(__name__)
 
 
 class Key(IntEnum):
@@ -65,22 +62,6 @@ class AdbInputDriver(InputDriver):
 
     def key(self, keycode):
         self._device.shell(f"input keyevent {int(keycode)}")
-
-
-class DryRunInputDriver(InputDriver):
-    """Hiçbir şey göndermez, sadece loglar. Eşik değeri denerken güvenli mod."""
-
-    def tap(self, loc):
-        log.info("[dry-run] tap %s", loc)
-
-    def swipe(self, start, end, duration_ms=300):
-        log.info("[dry-run] swipe %s -> %s (%d ms)", start, end, duration_ms)
-
-    def type_text(self, text):
-        log.info("[dry-run] text %r", text)
-
-    def key(self, keycode):
-        log.info("[dry-run] key %s", keycode)
 
 
 class HumanizedInputDriver(InputDriver):

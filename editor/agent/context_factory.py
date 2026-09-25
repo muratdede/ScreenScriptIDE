@@ -1,6 +1,9 @@
-"""ProjectConfig -> screenscript.ScriptContext. Ana kodu sadece public API'si üzerinden kullanır."""
+"""ProjectConfig + AppConfig (cihaz bağlantısı, bildirim) -> screenscript.ScriptContext.
+Ana kodu sadece public API'si üzerinden kullanır."""
 
 from __future__ import annotations
+
+from typing import Optional
 
 from adb_capture import ScreencapFormat
 from screenscript import (ContextBuilder, HumanizedInputDriver, MultiScaleMatcher, ScriptContext,
@@ -14,8 +17,9 @@ class ContextFactory:
     """Proje ayarlarından script bağlamı kurar. Farklı bir kurulum için alt sınıfta
     create_builder/configure_* metotlarını ezmeniz yeterli."""
 
-    def __init__(self, project: Project):
+    def __init__(self, project: Project, app: Optional[AppConfig] = None):
         self._project = project
+        self._app = app or AppConfig.load()   # %LOCALAPPDATA%\ScreenScript\settings.json
 
     def build(self) -> ScriptContext:
         builder = self.create_builder()
@@ -30,10 +34,10 @@ class ContextFactory:
                         scan_rate=c.scan_rate, save_on_fail=c.save_on_fail)
 
     def create_builder(self) -> ContextBuilder:
-        c = self._project.config
-        return ContextBuilder(host=c.host, port=int(c.port), adb_path=c.adb_path or None,
-                              screencap_format=ScreencapFormat(c.screencap_format),
-                              background=c.background, dry_run=c.dry_run,
+        c, app = self._project.config, self._app
+        return ContextBuilder(host=app.host, port=int(app.port), adb_path=app.adb_path or None,
+                              screencap_format=ScreencapFormat(app.screencap_format),
+                              background=app.background,
                               settings=self.create_settings(),
                               image_dirs=self._project.image_search_dirs())
 
@@ -54,7 +58,7 @@ class ContextFactory:
     def configure_notifier(self, builder: ContextBuilder) -> None:
         """Token ve kullanıcı adı varsa push_notification Telegram'a gider; yoksa script
         push_notification çağırdığında NotificationError alır."""
-        app = AppConfig.load()   # uygulama ayarı (%LOCALAPPDATA%\ScreenScript\settings.json)
+        app = self._app
         token = app.effective_telegram_token()
         if token and app.telegram_username.strip():
             builder.with_notifier(TelegramNotifier(token, app.telegram_username,

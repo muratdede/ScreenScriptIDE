@@ -87,6 +87,8 @@ class MainWindow(QMainWindow):
         bus = ctx.bus
         bus.project_opened.connect(self._on_project_opened)
         bus.project_config_changed.connect(self._on_project_config)
+        bus.app_config_changed.connect(self._on_app_config)
+        self._on_app_config(ctx.app_config)
         bus.active_file_changed.connect(self._on_active_file)
         bus.run_requested.connect(lambda path, debug: self.run_controller.run(debug=debug, script=path))
         bus.run_started.connect(lambda *_: self.views["console"].reveal() if "console" in self.views else None)
@@ -363,7 +365,7 @@ class MainWindow(QMainWindow):
         self._crumb_label = QLabel()
         self._state_label = QLabel()
         self._device_label = QLabel()
-        self._device_label.setToolTip("ADB hedefi (Proje Ayarları)")
+        self._device_label.setToolTip("ADB hedefi (Ayarlar, Ctrl+Alt+S)")
         self._pos_label = QLabel()
         self._enc_label = QLabel("UTF-8   4 boşluk")
         sb.addWidget(self._crumb_label, 1)
@@ -492,9 +494,10 @@ class MainWindow(QMainWindow):
         self._on_active_file(self.tabs.current_document_path() or "")
 
     def _on_project_config(self, project) -> None:
-        c = project.config
-        self._device_label.setText(f"{c.host}:{c.port}")
         self._update_run_target()
+
+    def _on_app_config(self, config) -> None:
+        self._device_label.setText(f"{config.host}:{config.port}")
 
     @staticmethod
     def _open_files_key(root: str) -> str:
@@ -531,9 +534,9 @@ class MainWindow(QMainWindow):
 
     def edit_app_settings(self) -> None:
         from .dialogs import AppSettingsDialog
-        dialog = AppSettingsDialog(self)
+        dialog = AppSettingsDialog(self.ctx.app_config, self)
         if dialog.exec():
-            dialog.apply()
+            self.ctx.save_app_config(dialog.result_config())
             self.statusBar().showMessage("Ayarlar kaydedildi", 3000)
 
     def goto_line(self) -> None:

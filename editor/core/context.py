@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import QObject, QSettings
 
-from .app_settings import create_ide_settings, move_session_files
+from .app_settings import AppConfig, create_ide_settings, move_session_files
 from .breakpoints import BreakpointStore
 from .device_input import DeviceInput
 from .completion import FallbackCompletionProvider, create_default_provider
@@ -43,6 +43,7 @@ class EditorContext(QObject):
         self.install_root = install_root
         self.settings: QSettings = create_ide_settings()   # %LOCALAPPDATA%\ScreenScript\ide.ini
         move_session_files(install_root)                    # oturum dosyaları çalışma alanında kalmasın
+        self.app_config = AppConfig.load()                  # %LOCALAPPDATA%\ScreenScript\settings.json
         self.bus = EventBus(self)
         self.breakpoints = BreakpointStore(self)
         self.session = ScriptSession(install_root, parent=self)
@@ -61,6 +62,8 @@ class EditorContext(QObject):
     # ---- proje ----------------------------------------------------------- #
     def open_project(self, root: str) -> Project:
         project = Project.open(root)
+        self.app_config = AppConfig.load()   # proje eski bağlantı ayarlarını taşımış olabilir
+        self.bus.app_config_changed.emit(self.app_config)
         self.grabber.stop_live()
         self.grabber.close_stream()
         self.project = project
@@ -75,11 +78,16 @@ class EditorContext(QObject):
     def save_project_config(self) -> None:
         if self.project:
             self.project.save()
-            if self.grabber.is_live:   # bağlantı ayarları değişmiş olabilir: yeni ayarlarla sürdür
-                self.grabber.stop_live()
-                self.grabber.start_live(self.project.config)
             self.bus.project_config_changed.emit(self.project)
             self.images.set_project(self.project)   # görsel klasörleri değişmiş olabilir
+
+    def save_app_config(self, config: AppConfig) -> None:
+        config.save()
+        self.app_config = config
+        if self.grabber.is_live:   # bağlantı ayarları değişmiş olabilir: yeni ayarlarla sürdür
+            self.grabber.stop_live()
+            self.grabber.start_live(config)
+        self.bus.app_config_changed.emit(config)
 
     def recent_projects(self) -> List[str]:
         value = self.settings.value("recent_projects", [])
@@ -94,11 +102,11 @@ class EditorContext(QObject):
     def grab_screen(self) -> None:
         """Tek kare yakalar."""
         if self.project:
-            self.grabber.grab(self.project.config)
+            self.grabber.grab(self.app_config)
 
     def toggle_live_screen(self) -> None:
         """Canlı görüntüyü başlatır / durdurur (durdurunca son kare ekranda kalır)."""
         if self.grabber.is_live:
             self.grabber.stop_live()
         elif self.project:
-            self.grabber.start_live(self.project.config)
+            self.grabber.start_live(self.app_config)

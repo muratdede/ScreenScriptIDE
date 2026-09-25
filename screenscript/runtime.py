@@ -21,7 +21,7 @@ from adb_capture import AdbDevice, FrameSource, ScreencapFormat, create_source
 from .engine import Engine
 from .errors import FindFailed, ImageNotFound, NotificationError, ScriptError
 from .geometry import Location, Rect
-from .input import (AdbInputDriver, DryRunInputDriver, HumanizedInputDriver, InputDriver, Key)
+from .input import (AdbInputDriver, HumanizedInputDriver, InputDriver, Key)
 from .matching import Matcher, MultiScaleMatcher, TemplateMatcher
 from .notify import Notifier, NullNotifier
 from .pattern import ImageLibrary, ImagePath, Pattern
@@ -104,7 +104,6 @@ class ContextBuilder:
     screencap_format: ScreencapFormat = ScreencapFormat.STREAM
     background: bool = False
     background_interval: float = 0.3
-    dry_run: bool = False
     settings: Settings = field(default_factory=Settings)
     image_dirs: list = field(default_factory=list)
 
@@ -155,8 +154,6 @@ class ContextBuilder:
 
         if self._input is not None:
             driver = self._input
-        elif self.dry_run:
-            driver = DryRunInputDriver()
         else:
             driver = AdbInputDriver(get_device())
         for wrap in self._input_decorators:

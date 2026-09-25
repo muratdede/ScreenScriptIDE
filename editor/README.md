@@ -12,7 +12,8 @@ python -m editor editor/examples/ornek_proje      # belirli bir klasörü proje 
 ```
 
 Proje = herhangi bir klasör. İlk açılışta `images/`, `.screenscript.json` ve `main.py` oluşturulur.
-Cihaz bağlantısı ve eşik gibi ayarlar: **Proje → Proje Ayarları (Ctrl+,)**.
+Cihaz bağlantısı (host, port, adb, yakalama formatı): **Ayarlar (Ctrl+Alt+S)** — tüm projelerde ortak.
+Eşik, ölçekler, ana script gibi ayarlar: **Proje Ayarları (Ctrl+Alt+Shift+S)**.
 
 ## Kısayollar
 

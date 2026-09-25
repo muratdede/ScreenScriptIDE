@@ -349,7 +349,7 @@ class ScreenView(DockView):
         self._canvas = ScreenCanvas()
         self._canvas.selection_changed.connect(self._on_selection)
         self._canvas.hovered.connect(self._on_hover)
-        c, cfg = self._canvas, lambda: self.ctx.project.config
+        c, cfg = self._canvas, lambda: self.ctx.app_config
         c.tapped.connect(lambda x, y: self._input(lambda: self.ctx.device_input.tap(cfg(), x, y)))
         c.swiped.connect(lambda x1, y1, x2, y2, ms: self._input(
             lambda: self.ctx.device_input.swipe(cfg(), x1, y1, x2, y2, ms)))
@@ -427,7 +427,7 @@ class ScreenView(DockView):
             send()
 
     def _send_key(self, keycode: int, label: str = "") -> None:
-        self._input(lambda: self.ctx.device_input.key(self.ctx.project.config, int(keycode), label))
+        self._input(lambda: self.ctx.device_input.key(self.ctx.app_config, int(keycode), label))
 
     def _queue_text(self, text: str) -> None:
         self._text_buffer += text
@@ -437,7 +437,7 @@ class ScreenView(DockView):
         self._text_timer.stop()
         if self._text_buffer and self.ctx.project:
             text, self._text_buffer = self._text_buffer, ""
-            self.ctx.device_input.text(self.ctx.project.config, text)
+            self.ctx.device_input.text(self.ctx.app_config, text)
 
     def _on_input_sent(self, label: str) -> None:
         if self._canvas.clicker:

@@ -76,14 +76,20 @@ def script_namespace() -> Dict[str, object]:
     """Script'in çalışırken göreceği globallerin aynısı. Gerçek ScriptContext.namespace()
     kullanılır; cihaz yerine boş bir görüntü sağlayıcı verilir. Böylece API'ye eklenen her
     yeni isim editörde de otomatik görünür."""
-    from screenscript import (DryRunInputDriver, Engine, ImageLibrary, ImagePath, ImageProvider,
+    from screenscript import (Engine, ImageLibrary, ImagePath, ImageProvider, InputDriver,
                               ScriptContext, Settings, TemplateMatcher)
 
     class _BlankProvider(ImageProvider):
         def snapshot(self, fresh=True):
             return np.zeros((720, 1280, 3), np.uint8)
 
-    engine = Engine(_BlankProvider(), TemplateMatcher(), DryRunInputDriver(),
+    class _NoInput(InputDriver):   # isim alanı hiç çalıştırılmaz; girdiler yok sayılır
+        def tap(self, loc): pass
+        def swipe(self, start, end, duration_ms=300): pass
+        def type_text(self, text): pass
+        def key(self, keycode): pass
+
+    engine = Engine(_BlankProvider(), TemplateMatcher(), _NoInput(),
                     ImageLibrary(ImagePath()), Settings())
     ctx = ScriptContext(engine)
     ctx.open()

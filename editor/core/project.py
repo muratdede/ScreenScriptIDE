@@ -28,25 +28,20 @@ log("Merhaba! Ekran: %dx%d" % (SCREEN.w, SCREEN.h))
 class ProjectConfig:
     """Projeye özgü çalışma ayarları. Yeni alan eklemek geriye dönük uyumludur."""
 
-    host: str = "127.0.0.1"
-    port: int = 5555
-    adb_path: str = ""
-    screencap_format: str = "stream"   # stream (H.264, hızlı) | raw | png
     similarity: float = 0.7
     timeout: float = 3.0
     scan_rate: float = 3.0
     # Çoklu ölçekli arama her zaman açıktır; sadece denenecek ölçekler ayarlanır.
-    # (Eski projelerdeki "multiscale" anahtarı from_dict'te yok sayılır.)
+    # (Eski projelerdeki "multiscale" ve kaldırılan "dry_run" anahtarları from_dict'te yok sayılır.)
     scales: List[float] = field(default_factory=lambda: [0.8, 0.9, 1.0, 1.1, 1.2])
     grayscale: bool = False
     humanize: bool = False
-    background: bool = False
-    dry_run: bool = False
     save_on_fail: bool = True
     main_script: str = "main.py"
     script_args: Dict[str, str] = field(default_factory=dict)
     image_dirs: List[str] = field(default_factory=lambda: ["images"])
-    # Not: Telegram ayarları proje değil uygulama ayarıdır (core/app_settings.AppConfig).
+    # Not: cihaz bağlantısı (host, port, adb_path, screencap_format, background) ve Telegram ayarları proje değil
+    # uygulama ayarıdır (core/app_settings.AppConfig). Eski projelerdeki bu anahtarlar açılışta taşınır.
 
     def to_dict(self) -> dict:
         return asdict(self)

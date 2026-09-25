@@ -20,7 +20,7 @@ from PySide6.QtCore import QObject, Signal
 
 from adb_capture import AdbDevice, AdbScreencapSource, AdbStreamSource, FrameSource, ScreencapFormat
 
-from .project import ProjectConfig
+from .app_settings import AppConfig
 
 
 class ScreenGrabber(QObject):
@@ -58,13 +58,13 @@ class ScreenGrabber(QObject):
         return self._live_stop is not None
 
     # ---- tek kare -------------------------------------------------------- #
-    def grab(self, config: ProjectConfig) -> None:
+    def grab(self, config: AppConfig) -> None:
         if self._busy or self.is_live:
             return
         self._set_busy(True)
         threading.Thread(target=self._work_once, args=(config,), daemon=True).start()
 
-    def _work_once(self, config: ProjectConfig) -> None:
+    def _work_once(self, config: AppConfig) -> None:
         try:
             stream = self._stream
             if stream is not None and stream.streaming and self._stream_key == self._key(config):
@@ -83,7 +83,7 @@ class ScreenGrabber(QObject):
             self._set_busy(False)
 
     # ---- canlı ----------------------------------------------------------- #
-    def start_live(self, config: ProjectConfig) -> None:
+    def start_live(self, config: AppConfig) -> None:
         if self.is_live:
             return
         stop = threading.Event()
@@ -102,13 +102,13 @@ class ScreenGrabber(QObject):
         self.live_changed.emit(False)
         self._schedule_stream_close()
 
-    def toggle_live(self, config: ProjectConfig) -> None:
+    def toggle_live(self, config: AppConfig) -> None:
         if self.is_live:
             self.stop_live()
         else:
             self.start_live(config)
 
-    def _work_live(self, config: ProjectConfig, stop: threading.Event) -> None:
+    def _work_live(self, config: AppConfig, stop: threading.Event) -> None:
         try:
             source = self._open_source(config)
             if isinstance(source, AdbStreamSource):
@@ -160,10 +160,10 @@ class ScreenGrabber(QObject):
 
     # ---- ortak ----------------------------------------------------------- #
     @staticmethod
-    def _key(config: ProjectConfig) -> Tuple:
+    def _key(config: AppConfig) -> Tuple:
         return (config.host, int(config.port), config.adb_path)
 
-    def _open_source(self, config: ProjectConfig) -> FrameSource:
+    def _open_source(self, config: AppConfig) -> FrameSource:
         fmt = ScreencapFormat(config.screencap_format)
         if fmt is not ScreencapFormat.STREAM:
             source = AdbScreencapSource(self._get_device(config), fmt)
@@ -229,7 +229,7 @@ class ScreenGrabber(QObject):
         self._busy = busy
         self.busy_changed.emit(busy)
 
-    def _get_device(self, config: ProjectConfig) -> AdbDevice:
+    def _get_device(self, config: AppConfig) -> AdbDevice:
         key = (config.host, int(config.port), config.adb_path)
         if self._device is None or key != self._device_key:
             self._device = AdbDevice.from_host_port(config.host, int(config.port),

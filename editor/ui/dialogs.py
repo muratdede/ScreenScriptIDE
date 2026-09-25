@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
-
 import threading
 
 from PySide6.QtCore import Qt, Signal
@@ -24,18 +24,6 @@ class ProjectSettingsDialog(QDialog):
         self._project = project
         c = project.config
 
-        # bağlantı
-        self.host = QLineEdit(c.host)
-        self.port = QSpinBox(minimum=1, maximum=65535, value=int(c.port))
-        self.adb = QLineEdit(c.adb_path)
-        self.adb.setPlaceholderText("Boş = otomatik bul (PATH / BlueStacks HD-Adb.exe)")
-        adb_row = self._with_button(self.adb, "Gözat…", self._browse_adb)
-        self.fmt = QComboBox()
-        self.fmt.addItem("stream — H.264 akışı (hızlı, ~35 FPS)", "stream")
-        self.fmt.addItem("raw — screencap (yavaş, ~3 FPS)", "raw")
-        self.fmt.addItem("png — screencap PNG", "png")
-        self.fmt.setCurrentIndex(max(0, self.fmt.findData(c.screencap_format)))
-
         # eşleştirme
         self.similarity = QDoubleSpinBox(minimum=0.1, maximum=1.0, singleStep=0.05, decimals=2, value=c.similarity)
         self.timeout = QDoubleSpinBox(minimum=0.0, maximum=600, singleStep=0.5, decimals=1, value=c.timeout)
@@ -48,9 +36,7 @@ class ProjectSettingsDialog(QDialog):
         # çalıştırma
         self.main_script = QLineEdit(c.main_script)
         main_row = self._with_button(self.main_script, "Seç…", self._browse_main)
-        self.dry_run = QCheckBox("Dry-run: tıklama gönderme, sadece logla", checked=c.dry_run)
         self.humanize = QCheckBox("Tıklamalara küçük sapma/gecikme ekle", checked=c.humanize)
-        self.background = QCheckBox("Arka planda sürekli yakala", checked=c.background)
         self.save_on_fail = QCheckBox("Bulunamayınca ekranı debug/ klasörüne kaydet", checked=c.save_on_fail)
         self.image_dirs = QLineEdit(", ".join(c.image_dirs))
         self.args = QPlainTextEdit("\n".join(f"{k}={v}" for k, v in c.script_args.items()))
@@ -58,15 +44,14 @@ class ProjectSettingsDialog(QDialog):
         self.args.setMaximumHeight(90)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(self._group("Cihaz bağlantısı", [
-            ("Host", self.host), ("Port", self.port), ("adb yolu", adb_row), ("Yakalama formatı", self.fmt)]))
         layout.addWidget(self._group("Eşleştirme", [
             ("Varsayılan eşik", self.similarity), ("Bekleme süresi (sn)", self.timeout),
             ("Tarama hızı (/sn)", self.scan_rate), ("Ölçekler (her zaman açık)", self.scales), ("", self.grayscale)]))
         layout.addWidget(self._group("Çalıştırma", [
-            ("Ana script", main_row), ("Görsel klasörleri", self.image_dirs), ("", self.dry_run),
-            ("", self.humanize), ("", self.background), ("", self.save_on_fail), ("Script argümanları", self.args)]))
-        note = QLabel("Telegram bildirim ayarları uygulama ayarlarındadır (Ayarlar, Ctrl+Alt+S).")
+            ("Ana script", main_row), ("Görsel klasörleri", self.image_dirs),
+            ("", self.humanize), ("", self.save_on_fail), ("Script argümanları", self.args)]))
+        note = QLabel("Cihaz bağlantısı ve Telegram bildirim ayarları uygulama ayarlarındadır "
+                      "(Ayarlar, Ctrl+Alt+S).")
         note.setObjectName("hint")
         layout.addWidget(note)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -93,12 +78,6 @@ class ProjectSettingsDialog(QDialog):
         row.addWidget(b)
         return w
 
-    def _browse_adb(self):
-        path, _ = QFileDialog.getOpenFileName(self, "adb seç", r"C:\Program Files\BlueStacks_nxt"
-                                              if os.name == "nt" else "", "adb (adb* HD-Adb*);;Tümü (*)")
-        if path:
-            self.adb.setText(path)
-
     def _browse_main(self):
         path, _ = QFileDialog.getOpenFileName(self, "Ana script", self._project.root, "Python (*.py)")
         if path:
@@ -106,19 +85,13 @@ class ProjectSettingsDialog(QDialog):
 
     def apply(self) -> None:
         c = self._project.config
-        c.host = self.host.text().strip() or "127.0.0.1"
-        c.port = self.port.value()
-        c.adb_path = self.adb.text().strip()
-        c.screencap_format = self.fmt.currentData()
         c.similarity = round(self.similarity.value(), 2)
         c.timeout = self.timeout.value()
         c.scan_rate = self.scan_rate.value()
         c.scales = ProjectConfig.normalize_scales(self.scales.text().replace(";", ",").split(","))
         c.grayscale = self.grayscale.isChecked()
         c.main_script = self.main_script.text().strip()
-        c.dry_run = self.dry_run.isChecked()
         c.humanize = self.humanize.isChecked()
-        c.background = self.background.isChecked()
         c.save_on_fail = self.save_on_fail.isChecked()
         c.image_dirs = [d.strip() for d in self.image_dirs.text().split(",") if d.strip()] or ["images"]
         args = {}
@@ -135,12 +108,24 @@ class AppSettingsDialog(QDialog):
 
     _test_done = Signal(bool, str)
 
-    def __init__(self, parent=None):
+    def __init__(self, config: AppConfig, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ayarlar")
         self.setMinimumWidth(560)
-        self._config = AppConfig.load()
-        c = self._config
+        self._config = config
+        c = config
+
+        self.host = QLineEdit(c.host)
+        self.port = QSpinBox(minimum=1, maximum=65535, value=int(c.port))
+        self.adb = QLineEdit(c.adb_path)
+        self.adb.setPlaceholderText("Boş = otomatik bul (PATH / BlueStacks HD-Adb.exe)")
+        adb_row = ProjectSettingsDialog._with_button(self.adb, "Gözat…", self._browse_adb)
+        self.fmt = QComboBox()
+        self.fmt.addItem("stream — H.264 akışı (hızlı, ~35 FPS)", "stream")
+        self.fmt.addItem("raw — screencap (yavaş, ~3 FPS)", "raw")
+        self.fmt.addItem("png — screencap PNG", "png")
+        self.fmt.setCurrentIndex(max(0, self.fmt.findData(c.screencap_format)))
+        self.background = QCheckBox("Script çalışırken arka planda sürekli yakala", checked=c.background)
 
         self.tg_token = QLineEdit(c.telegram_token)
         self.tg_token.setEchoMode(QLineEdit.PasswordEchoOnEdit)
@@ -171,6 +156,9 @@ class AppSettingsDialog(QDialog):
         fr.addWidget(open_btn)
 
         layout = QVBoxLayout(self)
+        layout.addWidget(ProjectSettingsDialog._group("Cihaz bağlantısı", [
+            ("Host", self.host), ("Port", self.port), ("adb yolu", adb_row), ("Yakalama formatı", self.fmt),
+            ("", self.background)]))
         layout.addWidget(ProjectSettingsDialog._group("Bildirim (Telegram) — push_notification()", [
             ("Bot token", self.tg_token), ("Kullanıcı adı", self.tg_user), ("", test_row)]))
         layout.addWidget(ProjectSettingsDialog._group("Ayar klasörü", [
@@ -189,15 +177,26 @@ class AppSettingsDialog(QDialog):
         label.setWordWrap(True)
         return label
 
-    def _current(self) -> AppConfig:
-        return AppConfig(telegram_token=self.tg_token.text().strip(),
-                         telegram_username=self.tg_user.text().strip())
+    def _browse_adb(self):
+        path, _ = QFileDialog.getOpenFileName(self, "adb seç", r"C:\Program Files\BlueStacks_nxt"
+                                              if os.name == "nt" else "", "adb (adb* HD-Adb*);;Tümü (*)")
+        if path:
+            self.adb.setText(path)
 
-    def apply(self) -> None:
-        self._current().save()
+    def result_config(self) -> AppConfig:
+        """Penceredeki değerlerle yeni AppConfig (pencerede olmayan alanlar korunur)."""
+        return dataclasses.replace(
+            self._config,
+            host=self.host.text().strip() or "127.0.0.1",
+            port=self.port.value(),
+            adb_path=self.adb.text().strip(),
+            screencap_format=self.fmt.currentData(),
+            background=self.background.isChecked(),
+            telegram_token=self.tg_token.text().strip(),
+            telegram_username=self.tg_user.text().strip())
 
     def _send_test(self) -> None:
-        cfg = self._current()
+        cfg = self.result_config()
         token, user = cfg.effective_telegram_token(), cfg.telegram_username
         if not token or not user:
             self._on_test_done(False, "Token ve kullanıcı adı gerekli.")

@@ -9,6 +9,7 @@ class EventBus(QObject):
     # proje
     project_opened = Signal(object)          # Project
     project_config_changed = Signal(object)  # Project
+    app_config_changed = Signal(object)      # AppConfig (uygulama ayarları: cihaz bağlantısı ...)
 
     # editör
     open_file_requested = Signal(str, int)   # path, line (0 = yok)

@@ -2,13 +2,14 @@
 
 Hepsi tek klasörde durur: %LOCALAPPDATA%\\ScreenScript  (Linux/macOS: ~/.local/share/ScreenScript)
     ide.ini              — IDE durumu: pencere yerleşimi, son projeler, açık dosyalar (QSettings, INI)
-    settings.json        — uygulama ayarları (Telegram bot token'ı, kullanıcı adı ...); Qt gerektirmez,
+    settings.json        — uygulama ayarları (cihaz bağlantısı, Telegram bot token'ı ...); Qt gerektirmez,
                            script süreci (editor.agent) de buradan okur
     telegram_chats.json  — kullanıcı adı -> chat_id önbelleği
     *.session            — Telegram oturum dosyaları (çalışma alanında tutulmaz)
 
 Proje klasörlerinde gizli bilgi kalmaz. Eski sürümlerin bıraktıkları ilk açılışta buraya taşınır:
-Windows kayıt defterindeki QSettings değerleri, proje .screenscript.json'undaki telegram_* alanları,
+Windows kayıt defterindeki QSettings değerleri, proje .screenscript.json'undaki telegram_* ve cihaz
+bağlantısı alanları,
 proje kökündeki .telegram_chats.json ve çalışma alanındaki *.session dosyaları.
 """
 
@@ -51,6 +52,13 @@ def telegram_session_path(name: str = "oturum") -> str:
 class AppConfig:
     """Tüm projelerde ortak kullanıcı ayarları. Yeni alan eklemek geriye dönük uyumludur."""
 
+    # cihaz bağlantısı (bu bilgisayardaki emülatöre/cihaza bağlı; projeden bağımsız)
+    host: str = "127.0.0.1"
+    port: int = 5555
+    adb_path: str = ""
+    screencap_format: str = "stream"   # stream (H.264, hızlı) | raw | png
+    background: bool = False           # script çalışırken arka planda sürekli yakala
+
     # push_notification: Telegram bot token'ı (boşsa TELEGRAM_BOT_TOKEN ortam değişkeni) ve
     # bildirim alacak kullanıcı adı. Kullanıcının bota bir kez Start demiş olması gerekir.
     telegram_token: str = ""
@@ -64,16 +72,20 @@ class AppConfig:
 
     @classmethod
     def load(cls) -> "AppConfig":
+        data = cls._load_raw()
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
+
+    @classmethod
+    def _load_raw(cls) -> dict:
         try:
             with open(cls.path(), encoding="utf-8") as f:
-                data = json.load(f)
+                return json.load(f) or {}
         except FileNotFoundError:
-            return cls()
+            return {}
         except (OSError, ValueError) as e:
             log.warning("Uygulama ayarları okunamadı: %s (%s)", cls.path(), e)
-            return cls()
-        known = {f.name for f in fields(cls)}
-        return cls(**{k: v for k, v in (data or {}).items() if k in known})
+            return {}
 
     def save(self) -> None:
         tmp = self.path() + ".tmp"
@@ -89,24 +101,40 @@ class AppConfig:
 # Eski konumlardan taşıma
 # --------------------------------------------------------------------------- #
 TELEGRAM_KEYS = ("telegram_token", "telegram_username")
+DEVICE_KEYS = ("host", "port", "adb_path", "screencap_format", "background")
 OLD_TELEGRAM_CACHE = ".telegram_chats.json"
 
 
 def migrate_project(root: str, raw_config: dict) -> bool:
-    """Proje ayarındaki telegram_* alanlarını ve proje kökündeki önbelleği uygulama ayarlarına taşır.
-    Proje ayar dosyasının yeniden yazılması gerekiyorsa True döndürür."""
+    """Proje ayarındaki telegram_* ve cihaz bağlantısı alanlarını, proje kökündeki önbelleği uygulama
+    ayarlarına taşır. Proje ayar dosyasının yeniden yazılması gerekiyorsa True döndürür."""
     rewrite = False
-    if any(k in raw_config for k in TELEGRAM_KEYS):
+    if any(k in raw_config for k in TELEGRAM_KEYS + DEVICE_KEYS):
         app = AppConfig.load()
+        saved = AppConfig._load_raw()
         changed = False
         for key in TELEGRAM_KEYS:
             value = str(raw_config.get(key) or "").strip()
             if value and not getattr(app, key):   # kullanıcı ayarı zaten varsa ezilmez
                 setattr(app, key, value)
                 changed = True
+        for key in DEVICE_KEYS:
+            # varsayılanlar boş olmadığından "zaten ayarlı" = settings.json'da anahtar var;
+            # böylece ilk taşınan projenin bağlantısı alınır, sonrakiler ezmez
+            if key in raw_config and key not in saved:
+                value = raw_config[key]
+                if key == "port":
+                    value = int(value)
+                elif key == "background":
+                    value = bool(value)
+                else:
+                    value = str(value or "").strip()
+                setattr(app, key, value)
+                changed = True
         if changed:
             app.save()
-            log.info("Telegram ayarları proje dosyasından uygulama ayarlarına taşındı: %s", root)
+            log.info("Proje ayarlarındaki Telegram/cihaz bağlantısı alanları uygulama ayarlarına taşındı: %s",
+                     root)
         rewrite = True
     _merge_telegram_cache(os.path.join(root, OLD_TELEGRAM_CACHE))
     move_session_files(root)
