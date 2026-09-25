@@ -62,6 +62,7 @@ class EditorContext(QObject):
     def open_project(self, root: str) -> Project:
         project = Project.open(root)
         self.grabber.stop_live()
+        self.grabber.close_stream()
         self.project = project
         primary = self.completion.primary
         if primary is not None and hasattr(primary, "set_project"):

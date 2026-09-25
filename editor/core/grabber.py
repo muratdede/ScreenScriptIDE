@@ -4,17 +4,21 @@
   grab(config)        — tek kare
   start_live(config)  — durdurulana kadar sürekli yakalar (canlı görüntü); stop_live() ile durur.
 Canlı kipte UI yavaş kalırsa kareler kuyrukta birikmez: her zaman yalnızca en son kare teslim edilir.
+
+"stream" biçiminde (screenrecord H.264) canlı görüntü kareleri geldikçe iletir (~35 FPS). Akışın açılması
+~2 sn sürdüğü için Durdur'dan sonra akış bir süre (STREAM_IDLE_SECONDS) açık tutulur; Devam anında başlar.
 """
 
 from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from typing import Optional, Tuple
 
 from PySide6.QtCore import QObject, Signal
 
-from adb_capture import AdbDevice, AdbScreencapSource, ScreencapFormat
+from adb_capture import AdbDevice, AdbScreencapSource, AdbStreamSource, FrameSource, ScreencapFormat
 
 from .project import ProjectConfig
 
@@ -26,7 +30,8 @@ class ScreenGrabber(QObject):
     live_changed = Signal(bool)
     _frame_pending = Signal()  # thread -> UI thread köprüsü (kuyruklu bağlantı)
 
-    LIVE_MIN_INTERVAL = 0.05   # saniye; cihazı gereksiz yormamak için üst sınır ~20 FPS
+    LIVE_MIN_INTERVAL = 0.05   # screencap kipi: cihazı gereksiz yormamak için üst sınır ~20 FPS
+    STREAM_IDLE_SECONDS = 60   # canlı durdurulunca akış bu kadar açık kalır
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -38,6 +43,10 @@ class ScreenGrabber(QObject):
         self._live_stop: Optional[threading.Event] = None
         self._live_thread: Optional[threading.Thread] = None
         self.fps = 0.0
+        self._stream: Optional[AdbStreamSource] = None
+        self._stream_key: Optional[Tuple] = None
+        self._stream_idle: Optional[threading.Timer] = None
+        self._stream_lock = threading.Lock()
         self._frame_pending.connect(self._deliver)
 
     @property
@@ -57,7 +66,16 @@ class ScreenGrabber(QObject):
 
     def _work_once(self, config: ProjectConfig) -> None:
         try:
-            self._push(self._open_source(config).grab())
+            stream = self._stream
+            if stream is not None and stream.streaming and self._stream_key == self._key(config):
+                self._push(stream.grab())   # akış zaten açık: son kare anında
+            else:
+                # tek kare için akış açmaya (~2 sn) değmez; screencap
+                fmt = ScreencapFormat(config.screencap_format)
+                source = AdbScreencapSource(self._get_device(config),
+                                            ScreencapFormat.RAW if fmt is ScreencapFormat.STREAM else fmt)
+                source.open()
+                self._push(source.grab())
         except Exception as e:  # noqa: BLE001
             self._device = None
             self.failed.emit(str(e))
@@ -82,6 +100,7 @@ class ScreenGrabber(QObject):
         self._live_thread = None
         self.fps = 0.0
         self.live_changed.emit(False)
+        self._schedule_stream_close()
 
     def toggle_live(self, config: ProjectConfig) -> None:
         if self.is_live:
@@ -92,6 +111,9 @@ class ScreenGrabber(QObject):
     def _work_live(self, config: ProjectConfig, stop: threading.Event) -> None:
         try:
             source = self._open_source(config)
+            if isinstance(source, AdbStreamSource):
+                self._work_stream(source, stop)
+                return
             last = time.perf_counter()
             while not stop.is_set():
                 t0 = time.perf_counter()
@@ -113,11 +135,79 @@ class ScreenGrabber(QObject):
                 self.failed.emit(str(e))
                 self._frame_pending.emit()   # UI thread'inde canlı durumunu kapatmak için
 
+    def _work_stream(self, source: AdbStreamSource, stop: threading.Event) -> None:
+        """Akıştan kareler geldikçe iletir. Ekran değişmiyorsa kare gelmez (FPS 0 görünür)."""
+        stamps = deque(maxlen=60)
+        index = 0
+        first = source.grab()   # ilk kare (gerekirse screencap yedeği)
+        if not stop.is_set():
+            self._push(first)
+        index = source.frame_index
+        while not stop.is_set():
+            got = source.wait_next(index, timeout=0.5)
+            now = time.perf_counter()
+            while stamps and now - stamps[0] > 1.0:
+                stamps.popleft()
+            if got is None:
+                self.fps = float(len(stamps))
+                continue
+            index, image = got
+            if stop.is_set():
+                break
+            stamps.append(now)
+            self.fps = float(len(stamps))
+            self._push(image)
+
     # ---- ortak ----------------------------------------------------------- #
-    def _open_source(self, config: ProjectConfig) -> AdbScreencapSource:
-        source = AdbScreencapSource(self._get_device(config), ScreencapFormat(config.screencap_format))
-        source.open()
-        return source
+    @staticmethod
+    def _key(config: ProjectConfig) -> Tuple:
+        return (config.host, int(config.port), config.adb_path)
+
+    def _open_source(self, config: ProjectConfig) -> FrameSource:
+        fmt = ScreencapFormat(config.screencap_format)
+        if fmt is not ScreencapFormat.STREAM:
+            source = AdbScreencapSource(self._get_device(config), fmt)
+            source.open()
+            return source
+        with self._stream_lock:
+            if self._stream_idle is not None:
+                self._stream_idle.cancel()
+                self._stream_idle = None
+            if self._stream is None or self._stream_key != self._key(config):
+                if self._stream is not None:
+                    self._stream.close()
+                self._stream = AdbStreamSource(self._get_device(config))
+                self._stream_key = self._key(config)
+            stream = self._stream
+        stream.open()
+        return stream
+
+    def _schedule_stream_close(self) -> None:
+        with self._stream_lock:
+            if self._stream is None:
+                return
+            if self._stream_idle is not None:
+                self._stream_idle.cancel()
+            self._stream_idle = threading.Timer(self.STREAM_IDLE_SECONDS, self.close_stream)
+            self._stream_idle.daemon = True
+            self._stream_idle.start()
+
+    def close_stream(self) -> None:
+        """Açık akışı kapatır (boşta kalınca, proje değişince, uygulamadan çıkarken).
+        Canlı görüntü sürüyorsa kapatılmaz."""
+        with self._stream_lock:
+            if self._stream_idle is not None:
+                self._stream_idle.cancel()
+                self._stream_idle = None
+            if self.is_live:
+                return
+            stream, self._stream, self._stream_key = self._stream, None, None
+        if stream is not None:
+            stream.close()
+
+    def shutdown(self) -> None:
+        self.stop_live()
+        self.close_stream()
 
     def _push(self, image) -> None:
         with self._lock:

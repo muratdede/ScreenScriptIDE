@@ -6,11 +6,12 @@ from .consumers import CallbackConsumer, DiskSaver, FrameConsumer, LatestFrameBu
 from .frames import Frame, Region
 from .preview import PreviewWindow
 from .sources import AdbScreencapSource, CaptureError, FrameSource, ScreencapFormat
+from .stream import AdbStreamSource, create_source
 
 __all__ = [
     "AdbDevice", "AdbError", "AdbLocator",
     "PeriodicCapturer", "CaptureStats",
     "FrameConsumer", "LatestFrameBuffer", "DiskSaver", "CallbackConsumer",
     "Frame", "Region", "PreviewWindow",
-    "FrameSource", "AdbScreencapSource", "ScreencapFormat", "CaptureError",
+    "FrameSource", "AdbScreencapSource", "AdbStreamSource", "ScreencapFormat", "CaptureError", "create_source",
 ]

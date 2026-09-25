@@ -12,7 +12,7 @@ import argparse
 import logging
 import time
 
-from adb_capture import (AdbDevice, AdbScreencapSource, DiskSaver, LatestFrameBuffer,
+from adb_capture import (AdbDevice, create_source, DiskSaver, LatestFrameBuffer,
                          PeriodicCapturer, PreviewWindow, Region, ScreencapFormat)
 
 
@@ -22,7 +22,7 @@ def parse_args():
     p.add_argument("--port", type=int, default=5555, help="BlueStacks Ayarlar > Gelişmiş'te yazan port")
     p.add_argument("--adb", help="adb yolu (boşsa otomatik bulunur)")
     p.add_argument("--interval", type=float, default=1.0, help="Yakalama aralığı (sn)")
-    p.add_argument("--format", choices=[f.value for f in ScreencapFormat], default="raw")
+    p.add_argument("--format", choices=[f.value for f in ScreencapFormat], default="stream")
     p.add_argument("--crop", help="x,y,w,h")
     p.add_argument("--preview", action="store_true")
     p.add_argument("--save-dir", help="Verilirse kareler buraya kaydedilir")
@@ -38,7 +38,7 @@ def main():
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
 
     device = AdbDevice.from_host_port(args.host, args.port, adb_path=args.adb)
-    source = AdbScreencapSource(device, ScreencapFormat(args.format))
+    source = create_source(device, ScreencapFormat(args.format))
     buffer = LatestFrameBuffer()
 
     capturer = PeriodicCapturer(

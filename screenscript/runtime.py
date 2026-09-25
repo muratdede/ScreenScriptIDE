@@ -16,7 +16,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
-from adb_capture import AdbDevice, AdbScreencapSource, FrameSource, ScreencapFormat
+from adb_capture import AdbDevice, FrameSource, ScreencapFormat, create_source
 
 from .engine import Engine
 from .errors import FindFailed, ImageNotFound, NotificationError, ScriptError
@@ -101,7 +101,7 @@ class ContextBuilder:
     host: str = "127.0.0.1"
     port: int = 5555
     adb_path: Optional[str] = None
-    screencap_format: ScreencapFormat = ScreencapFormat.RAW
+    screencap_format: ScreencapFormat = ScreencapFormat.STREAM
     background: bool = False
     background_interval: float = 0.3
     dry_run: bool = False
@@ -148,7 +148,7 @@ class ContextBuilder:
                 device = AdbDevice.from_host_port(self.host, self.port, adb_path=self.adb_path)
             return device
 
-        source = self._source or AdbScreencapSource(get_device(), self.screencap_format)
+        source = self._source or create_source(get_device(), self.screencap_format)
         provider = self._provider or (
             BackgroundProvider(source, self.background_interval) if self.background
             else OnDemandProvider(source))
