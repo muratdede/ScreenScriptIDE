@@ -1,0 +1,221 @@
+"""Script çalıştırma ortamı.
+
+ScriptContext : Engine + Screen'i tutar, script'e verilecek global isimleri üretir.
+ContextBuilder: Varsayılan bileşenlerle bir ScriptContext kurar; her bileşen değiştirilebilir.
+ScriptRunner  : Bir .py script dosyasını bu globallerle çalıştırır.
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+import runpy
+import sys
+import time
+import traceback
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Optional
+
+from adb_capture import AdbDevice, AdbScreencapSource, FrameSource, ScreencapFormat
+
+from .engine import Engine
+from .errors import FindFailed, ImageNotFound, NotificationError, ScriptError
+from .geometry import Location, Rect
+from .input import (AdbInputDriver, DryRunInputDriver, HumanizedInputDriver, InputDriver, Key)
+from .matching import Matcher, MultiScaleMatcher, TemplateMatcher
+from .notify import Notifier, NullNotifier
+from .pattern import ImageLibrary, ImagePath, Pattern
+from .providers import BackgroundProvider, ImageProvider, OnDemandProvider
+from .region import Match, Region, Screen
+from .settings import Settings
+
+log = logging.getLogger("script")
+
+
+class ScriptContext:
+    """Bir script oturumu. Kaynakları açar/kapatır ve API isim alanını sağlar."""
+
+    def __init__(self, engine: Engine, notifier: Optional[Notifier] = None):
+        self.engine = engine
+        self.notifier: Notifier = notifier or NullNotifier()
+        self.screen: Optional[Screen] = None
+        self._extra: Dict[str, Any] = {}
+
+    def open(self) -> "ScriptContext":
+        self.engine.provider.open()
+        self.screen = Screen(self.engine)
+        log.info("Ekran: %dx%d", self.screen.w, self.screen.h)
+        return self
+
+    def close(self) -> None:
+        self.engine.provider.close()
+
+    def __enter__(self):
+        return self.open()
+
+    def __exit__(self, *exc):
+        self.close()
+
+    def register(self, name: str, obj: Any) -> None:
+        """Script'lere ek bir global isim ekler (ör. kendi yardımcı fonksiyonlarınız)."""
+        self._extra[name] = obj
+
+    def namespace(self, args: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+        """Script'in göreceği global isimler."""
+        s = self.screen
+        if s is None:
+            raise ScriptError("Önce open() çağrılmalı")
+        ns: Dict[str, Any] = {
+            # nesneler
+            "SCREEN": s, "SETTINGS": self.engine.settings, "ARGS": dict(args or {}),
+            # tipler
+            "Pattern": Pattern, "Region": lambda x, y, w, h: Region(Rect(x, y, w, h), self.engine),
+            "Location": Location, "Match": Match, "Key": Key,
+            "FindFailed": FindFailed, "ImageNotFound": ImageNotFound,
+            "NotificationError": NotificationError,
+            # SCREEN kısayolları (SikuliX'teki gibi global fonksiyonlar)
+            "find": s.find, "find_all": s.find_all, "exists": s.exists, "wait": s.wait,
+            "wait_vanish": s.wait_vanish, "best_score": s.best_score,
+            "click": s.click, "long_press": s.long_press, "drag_drop": s.drag_drop,
+            "swipe": s.swipe, "type_text": s.type_text, "key": s.key,
+            "highlight": s.highlight, "capture": s.capture,
+            # genel
+            "sleep": time.sleep, "log": log.info,
+            "add_image_path": self.engine.library.image_path.add,
+            "push_notification": self.notifier.send,
+        }
+        ns.update(self._extra)
+        return ns
+
+
+@dataclass
+class ContextBuilder:
+    """Varsayılan bileşenleri kurar. Değiştirmek istediğinizi with_* ile verin:
+
+        ctx = (ContextBuilder(port=5555)
+               .with_matcher(MultiScaleMatcher(TemplateMatcher()))
+               .with_input_decorator(lambda d: HumanizedInputDriver(d, jitter_px=5))
+               .build())
+    """
+
+    host: str = "127.0.0.1"
+    port: int = 5555
+    adb_path: Optional[str] = None
+    screencap_format: ScreencapFormat = ScreencapFormat.RAW
+    background: bool = False
+    background_interval: float = 0.3
+    dry_run: bool = False
+    settings: Settings = field(default_factory=Settings)
+    image_dirs: list = field(default_factory=list)
+
+    _source: Optional[FrameSource] = None
+    _provider: Optional[ImageProvider] = None
+    _matcher: Optional[Matcher] = None
+    _input: Optional[InputDriver] = None
+    _input_decorators: list = field(default_factory=list)
+    _notifier: Optional[Notifier] = None
+
+    def with_source(self, source: FrameSource) -> "ContextBuilder":
+        self._source = source
+        return self
+
+    def with_provider(self, provider: ImageProvider) -> "ContextBuilder":
+        self._provider = provider
+        return self
+
+    def with_matcher(self, matcher: Matcher) -> "ContextBuilder":
+        self._matcher = matcher
+        return self
+
+    def with_input(self, driver: InputDriver) -> "ContextBuilder":
+        self._input = driver
+        return self
+
+    def with_input_decorator(self, wrap: Callable[[InputDriver], InputDriver]) -> "ContextBuilder":
+        self._input_decorators.append(wrap)
+        return self
+
+    def with_notifier(self, notifier: Notifier) -> "ContextBuilder":
+        self._notifier = notifier
+        return self
+
+    def build(self) -> ScriptContext:
+        device: Optional[AdbDevice] = None
+
+        def get_device() -> AdbDevice:
+            nonlocal device
+            if device is None:
+                device = AdbDevice.from_host_port(self.host, self.port, adb_path=self.adb_path)
+            return device
+
+        source = self._source or AdbScreencapSource(get_device(), self.screencap_format)
+        provider = self._provider or (
+            BackgroundProvider(source, self.background_interval) if self.background
+            else OnDemandProvider(source))
+
+        if self._input is not None:
+            driver = self._input
+        elif self.dry_run:
+            driver = DryRunInputDriver()
+        else:
+            driver = AdbInputDriver(get_device())
+        for wrap in self._input_decorators:
+            driver = wrap(driver)
+
+        engine = Engine(provider=provider,
+                        matcher=self._matcher or TemplateMatcher(),
+                        input_driver=driver,
+                        library=ImageLibrary(ImagePath(self.image_dirs)),
+                        settings=self.settings)
+        return ScriptContext(engine, self._notifier)
+
+
+class ScriptRunner:
+    """Bir script dosyasını ScriptContext'in globalleriyle çalıştırır."""
+
+    def __init__(self, context: ScriptContext):
+        self._ctx = context
+
+    def run(self, script_path: str, args: Optional[Dict[str, str]] = None) -> int:
+        script_path = os.path.abspath(script_path)
+        if not os.path.isfile(script_path):
+            log.error("Script bulunamadı: %s", script_path)
+            return 2
+
+        # Script'in yanındaki ve images/ klasöründeki görseller otomatik bulunsun
+        script_dir = os.path.dirname(script_path)
+        paths = self._ctx.engine.library.image_path
+        for d in (script_dir, os.path.join(script_dir, "images"),
+                  os.path.join(os.path.dirname(script_dir), "images")):
+            if os.path.isdir(d):
+                paths.add(d)
+
+        log.info("Script başlıyor: %s", script_path)
+        started = time.monotonic()
+        old_argv = sys.argv
+        try:
+            with self._ctx:
+                sys.argv = [script_path]
+                runpy.run_path(script_path, init_globals=self._ctx.namespace(args), run_name="__main__")
+            log.info("Script bitti (%.1f sn)", time.monotonic() - started)
+            return 0
+        except KeyboardInterrupt:
+            log.warning("Kullanıcı tarafından durduruldu")
+            return 130
+        except ScriptError as e:
+            log.error("%s: %s", type(e).__name__, e)
+            return 1
+        except SystemExit as e:
+            if isinstance(e.code, int) or e.code is None:
+                return e.code or 0
+            log.error("%s", e.code)
+            return 1
+        except Exception:  # noqa: BLE001 — script hatası; iz bilgisini göster
+            log.error("Script hatası:\n%s", traceback.format_exc())
+            return 1
+        finally:
+            sys.argv = old_argv
+
+
+__all__ = ["ScriptContext", "ContextBuilder", "ScriptRunner",
+           "MultiScaleMatcher", "TemplateMatcher", "HumanizedInputDriver"]

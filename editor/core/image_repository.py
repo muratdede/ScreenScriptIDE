@@ -1,0 +1,110 @@
+"""Projedeki görsellerin tek doğruluk kaynağı.
+
+Değişiklikleri üç yolla yakalar:
+  1. QFileSystemWatcher  — anlık (klasöre dosya eklenince/silinince)
+  2. Yoklama (polling)    — watcher'ın kaçırdığı durumlar için: klasör silinip yeniden
+                           oluşturulması, ağ sürücüleri, dosyanın yerinde üzerine yazılması
+  3. Pencere odağı        — editöre geri dönüldüğünde hemen tazele
+Liste gerçekten değiştiyse `changed` sinyali bir kez yayılır; view'lar sadece buna abone olur.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Dict, List, Optional, Tuple
+
+from PySide6.QtCore import QFileSystemWatcher, QObject, Qt, QTimer, Signal
+from PySide6.QtWidgets import QApplication
+
+from .project import Project
+
+Snapshot = Dict[str, Tuple[float, int]]   # yol -> (mtime, boyut)
+
+
+class ImageRepository(QObject):
+    changed = Signal(list)   # sıralı görsel yolları
+
+    POLL_INTERVAL_MS = 2000
+    DEBOUNCE_MS = 250
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._project: Optional[Project] = None
+        self._snapshot: Snapshot = {}
+        self._images: List[str] = []
+
+        self._watcher = QFileSystemWatcher(self)
+        self._watcher.directoryChanged.connect(self._schedule)
+        self._watcher.fileChanged.connect(self._schedule)
+
+        self._debounce = QTimer(self, singleShot=True, interval=self.DEBOUNCE_MS)
+        self._debounce.timeout.connect(self.refresh)
+        self._poll = QTimer(self, interval=self.POLL_INTERVAL_MS)
+        self._poll.timeout.connect(self.refresh)
+
+        app = QApplication.instance()
+        if app is not None:
+            app.applicationStateChanged.connect(self._on_app_state)
+
+    # ---- dışa açık ------------------------------------------------------- #
+    @property
+    def images(self) -> List[str]:
+        return list(self._images)
+
+    def set_project(self, project: Optional[Project]) -> None:
+        self._project = project
+        self._snapshot = {}
+        self._images = []
+        if project is None:
+            self._poll.stop()
+            self._rewatch([])
+            self.changed.emit([])
+            return
+        self.refresh(force=True)
+        self._poll.start()
+
+    def refresh(self, force: bool = False) -> bool:
+        """Klasörleri tarar; liste ya da dosya içerikleri değiştiyse changed yayar."""
+        if self._project is None:
+            return False
+        snapshot = self._scan()
+        self._rewatch(self._watch_targets())
+        if not force and snapshot == self._snapshot:
+            return False
+        self._snapshot = snapshot
+        self._images = sorted(snapshot, key=lambda p: (os.path.dirname(p), os.path.basename(p).lower()))
+        self.changed.emit(self.images)
+        return True
+
+    # ---- iç -------------------------------------------------------------- #
+    def _scan(self) -> Snapshot:
+        snap: Snapshot = {}
+        for path in self._project.list_images():
+            try:
+                st = os.stat(path)
+                snap[path] = (st.st_mtime, st.st_size)
+            except OSError:
+                pass   # tarama sırasında silinmiş
+        return snap
+
+    def _watch_targets(self) -> List[str]:
+        # Proje kökü de izlenir: images/ sonradan oluşturulursa ya da silinirse haberimiz olsun
+        dirs = [self._project.root] + self._project.image_search_dirs()
+        return [d for d in dict.fromkeys(dirs) if os.path.isdir(d)]
+
+    def _rewatch(self, targets: List[str]) -> None:
+        current = set(self._watcher.directories())
+        wanted = set(targets)
+        stale = list(current - wanted)
+        if stale:
+            self._watcher.removePaths(stale)
+        missing = [d for d in targets if d not in current]
+        if missing:
+            self._watcher.addPaths(missing)
+
+    def _schedule(self, *_):
+        self._debounce.start()
+
+    def _on_app_state(self, state) -> None:
+        if state == Qt.ApplicationActive:
+            self._schedule()

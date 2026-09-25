@@ -1,0 +1,118 @@
+"""Proje görselleri: küçük resimler. Çift tık = yeni sekmede aç; koda sürükle = göreli yolu ekle.
+Liste ImageRepository'den gelir."""
+
+from __future__ import annotations
+
+import os
+from typing import Dict, List, Tuple
+
+from PySide6.QtCore import QMimeData, QSize, Qt, QUrl
+from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtWidgets import QAbstractItemView, QListView, QListWidget, QListWidgetItem, QMenu
+
+from .. import icons
+from .base import DockView
+
+
+class _ImageList(QListWidget):
+    """Sürüklenen öğeler dosya URL'si taşır; kod editörü bunu "images/x.png" olarak ekler."""
+
+    def mimeData(self, items):
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(it.data(Qt.UserRole)) for it in items])
+        return mime
+
+    def mimeTypes(self):
+        return ["text/uri-list"]
+
+
+class ImagesView(DockView):
+    view_id = "images"
+    title = "Görseller"
+    icon_name = "image"
+    default_area = Qt.LeftDockWidgetArea
+    tab_group = "left"
+    shortcut = "Alt+2"
+
+    THUMB = QSize(88, 64)
+
+    def build(self):
+        self._list = _ImageList()
+        self._list.setViewMode(QListView.IconMode)
+        self._list.setIconSize(self.THUMB)
+        self._list.setGridSize(QSize(110, 100))
+        self._list.setResizeMode(QListView.Adjust)
+        self._list.setMovement(QListView.Static)
+        self._list.setWordWrap(True)
+        self._list.setSpacing(4)
+        self._list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self._list.setDragEnabled(True)
+        self._list.setDragDropMode(QAbstractItemView.DragOnly)
+        self._list.setDefaultDropAction(Qt.CopyAction)
+        self._list.itemDoubleClicked.connect(self._open)
+        self._list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._list.customContextMenuRequested.connect(self._menu)
+        self._thumbs: Dict[str, Tuple[float, QIcon, str]] = {}   # yol -> (mtime, ikon, boyut metni)
+        self.ctx.images.changed.connect(self._show)
+        self._show(self.ctx.images.images)
+        return self._list
+
+    def title_actions(self):
+        return [self.make_action("refresh", "Yenile", lambda: self.ctx.images.refresh(force=True))]
+
+    def _show(self, paths: List[str]) -> None:
+        selected = self._list.currentItem().data(Qt.UserRole) if self._list.currentItem() else None
+        self._list.clear()
+        project = self.ctx.project
+        for path in paths:
+            icon, size_text = self._thumbnail(path)
+            label = project.relative(path) if project else os.path.basename(path)
+            item = QListWidgetItem(icon, os.path.basename(path))
+            item.setData(Qt.UserRole, path)
+            item.setToolTip(f"{label}  ({size_text})\nÇift tık: sekmede aç · Koda sürükle: yolunu ekle")
+            self._list.addItem(item)
+            if path == selected:
+                self._list.setCurrentItem(item)
+        self.setWindowTitle(f"Görseller ({len(paths)})")
+
+    def _thumbnail(self, path: str):
+        """Değişmeyen dosyaların küçük resmini tekrar üretme."""
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            mtime = 0
+        cached = self._thumbs.get(path)
+        if cached and cached[0] == mtime:
+            return cached[1], cached[2]
+        pm = QPixmap(path)
+        icon = QIcon(pm.scaled(self.THUMB, Qt.KeepAspectRatio, Qt.SmoothTransformation)) if not pm.isNull() else QIcon()
+        size_text = f"{pm.width()}x{pm.height()}" if not pm.isNull() else "okunamadı"
+        self._thumbs[path] = (mtime, icon, size_text)
+        return icon, size_text
+
+    def _open(self, item) -> None:
+        self.ctx.bus.open_file_requested.emit(item.data(Qt.UserRole), 0)
+
+    def _reference(self, path: str) -> str:
+        project = self.ctx.project
+        rel = project.relative(path) if project and project.contains(path) else path
+        return rel.replace("\\", "/")
+
+    def _insert(self, item, as_pattern: bool):
+        ref = self._reference(item.data(Qt.UserRole))
+        sim = self.ctx.project.config.similarity if self.ctx.project else 0.7
+        text = f'Pattern("{ref}").similar({sim:.2f})' if as_pattern else f'"{ref}"'
+        self.ctx.bus.insert_text_requested.emit(text)
+
+    def _menu(self, pos):
+        item = self._list.itemAt(pos)
+        menu = QMenu(self)
+        if item:
+            menu.addAction(icons.icon("image"), "Sekmede aç", lambda: self._open(item))
+            menu.addAction("Koda ekle (yol)", lambda: self._insert(item, False))
+            menu.addAction("Koda ekle (Pattern + eşik)", lambda: self._insert(item, True))
+            menu.addAction(icons.icon("match"), "Ekran görüntüsünde test et",
+                           lambda: self.ctx.bus.pattern_test_requested.emit(item.data(Qt.UserRole)))
+            menu.addSeparator()
+        menu.addAction(icons.icon("refresh"), "Yenile", lambda: self.ctx.images.refresh(force=True))
+        menu.exec(self._list.viewport().mapToGlobal(pos))

@@ -1,0 +1,23 @@
+{
+  "host": "127.0.0.1",
+  "port": 5555,
+  "adb_path": "",
+  "screencap_format": "raw",
+  "similarity": 0.85,
+  "timeout": 3.0,
+  "scan_rate": 3.0,
+  "scales": [0.8, 0.9, 1.0, 1.1, 1.2],
+  "grayscale": false,
+  "humanize": false,
+  "background": false,
+  "dry_run": true,
+  "save_on_fail": true,
+  "main_script": "main.py",
+  "script_args": {
+    "image": "button.png",
+    "threshold": "0.85"
+  },
+  "image_dirs": [
+    "images"
+  ]
+}
