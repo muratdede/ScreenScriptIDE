@@ -29,6 +29,7 @@ class RunController(QObject):
                                       f"({m['message']})\n", "err"))
         bus.debug_frame_selected.connect(lambda i, _f: setattr(self, "_frame_index", i))
         ctx.breakpoints.changed.connect(self._on_breakpoints_changed)
+        ctx.breakpoints.muted_changed.connect(self._on_breakpoints_changed)
 
     # ---- hangi script ---------------------------------------------------- #
     TARGET_CURRENT = "current"   # aktif sekme (proje içindeki .py ise), değilse ana script
@@ -72,7 +73,7 @@ class RunController(QObject):
             return False
         self._frame_index = 0
         session.start(LaunchRequest(project=self._ctx.project, script=script, debug=debug,
-                                    breakpoints=self._ctx.breakpoints.as_dict(),
+                                    breakpoints=self._ctx.breakpoints.active(),
                                     stop_on_entry=stop_on_entry))
         return True
 
@@ -102,6 +103,6 @@ class RunController(QObject):
         self._frame_index = 0
         self._ctx.bus.debug_paused.emit(msg)
 
-    def _on_breakpoints_changed(self, _path: str) -> None:
+    def _on_breakpoints_changed(self, _arg=None) -> None:
         if self._ctx.session.is_debugging:
-            self._ctx.session.set_breakpoints(self._ctx.breakpoints.as_dict())
+            self._ctx.session.set_breakpoints(self._ctx.breakpoints.active())

@@ -213,6 +213,9 @@ class MainWindow(QMainWindow):
         A("step_out", "Dışına Çık", rc.step_out, "Shift+F11", icon="step_out")
         A("toggle_bp", "Breakpoint Aç/Kapat", lambda: self._editor_call("toggle_breakpoint"), ["F9", "Ctrl+F8"],
           icon="breakpoint", color=red)
+        A("mute_bps", "Breakpoint'leri Geçici Kapat", self.ctx.breakpoints.set_muted, "Ctrl+F9",
+          "Breakpoint'ler silinmeden devre dışı bırakılır", checkable=True, icon="mute_breakpoints", color=red)
+        self.ctx.breakpoints.muted_changed.connect(self._actions["mute_bps"].setChecked)
         A("stop_on_entry", "Debug'da İlk Satırda Dur", lambda: None, checkable=True, icon="entry")
 
     def _debug(self) -> None:
@@ -247,7 +250,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addActions([a["step_over"], a["step_into"], a["step_out"]])
         m.addSeparator()
-        m.addActions([a["toggle_bp"], a["stop_on_entry"]])
+        m.addActions([a["toggle_bp"], a["mute_bps"], a["stop_on_entry"]])
 
         m = root.addMenu("Proje")
         m.addActions([a["settings"], a["grab"], a["grab_once"]])
@@ -313,7 +316,7 @@ class MainWindow(QMainWindow):
         more.setIcon(icons.icon("more"))
         more.setToolTip("Diğer çalıştırma seçenekleri")
         mmenu = QMenu(self)
-        mmenu.addActions([a["stop_on_entry"], a["toggle_bp"]])
+        mmenu.addActions([a["stop_on_entry"], a["toggle_bp"], a["mute_bps"]])
         mmenu.addSeparator()
         mmenu.addActions([a["grab"], a["grab_once"]])
         more.setMenu(mmenu)
@@ -324,9 +327,6 @@ class MainWindow(QMainWindow):
         search_btn = QToolButton()
         search_btn.setDefaultAction(a["find_files"])
         tb.addWidget(search_btn)
-        self._live_btn = QToolButton()
-        self._live_btn.setDefaultAction(a["grab"])
-        tb.addWidget(self._live_btn)
         tb.addAction(a["app_settings"])
         self.addToolBar(Qt.TopToolBarArea, tb)
 

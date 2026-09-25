@@ -11,7 +11,7 @@ from functools import lru_cache
 from typing import Callable, List, Optional, Tuple
 
 from PySide6.QtCore import QModelIndex, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import (QColor, QCursor, QGuiApplication, QIcon, QPainter, QPixmap, QStandardItem,
+from PySide6.QtGui import (QColor, QCursor, QGuiApplication, QIcon, QPainter, QPen, QPixmap, QStandardItem,
                            QStandardItemModel, QTextCursor, QTextDocument, QTextFormat)
 from PySide6.QtWidgets import QCompleter, QLabel, QPlainTextEdit, QTextEdit, QToolTip, QWidget
 
@@ -157,6 +157,7 @@ class CodeEditor(QPlainTextEdit):
         self.cursorPositionChanged.connect(self._update_extra_selections)
         self._update_gutter_width()
         ctx.breakpoints.changed.connect(self._on_breakpoints_changed)
+        ctx.breakpoints.muted_changed.connect(lambda _m: self._gutter.update())
 
         # tamamlama
         self._model = QStandardItemModel(self)
@@ -275,6 +276,7 @@ class CodeEditor(QPlainTextEdit):
         painter.fillRect(event.rect(), THEME.background)
         painter.setRenderHint(QPainter.Antialiasing)
         breakpoints = self._ctx.breakpoints.lines(self._path)
+        muted = self._ctx.breakpoints.muted
         current = self.current_line()
         block = self.firstVisibleBlock()
         top = round(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
@@ -285,10 +287,15 @@ class CodeEditor(QPlainTextEdit):
             number = block.blockNumber() + 1
             if block.isVisible():
                 if number in breakpoints:
-                    painter.setBrush(THEME.breakpoint)
-                    painter.setPen(Qt.NoPen)
                     d = min(12, line_h - 4)
-                    painter.drawEllipse(6, top + (line_h - d) // 2, d, d)
+                    if muted:   # geçici kapalı: içi boş halka
+                        painter.setBrush(Qt.NoBrush)
+                        painter.setPen(QPen(THEME.breakpoint, 1.5))
+                        painter.drawEllipse(QRectF(6.75, top + (line_h - d) / 2 + 0.75, d - 1.5, d - 1.5))
+                    else:
+                        painter.setBrush(THEME.breakpoint)
+                        painter.setPen(Qt.NoPen)
+                        painter.drawEllipse(6, top + (line_h - d) // 2, d, d)
                 if number == self._debug_line:
                     painter.setBrush(THEME.debug_arrow)
                     painter.setPen(Qt.NoPen)

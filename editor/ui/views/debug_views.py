@@ -133,6 +133,7 @@ class DebugView(DockView):
         bus.run_finished.connect(self._on_finished)
         bus.eval_result.connect(self._on_eval)
         self.ctx.breakpoints.changed.connect(lambda _p: self._refresh_breakpoints())
+        self.ctx.breakpoints.muted_changed.connect(lambda _m: self._refresh_breakpoints())
         self.ctx.session.state_changed.connect(self._update_state)
         self._update_state(SessionState.IDLE)
         return w
@@ -156,6 +157,7 @@ class DebugView(DockView):
         tb.addAction(actions["step_into"])
         tb.addAction(actions["step_out"])
         tb.addSeparator()
+        tb.addAction(actions["mute_bps"])
         tb.addAction(actions["stop_on_entry"])
         s.state_changed.connect(self._update_proxy_actions)
         self._update_proxy_actions(s.state)
@@ -271,14 +273,18 @@ class DebugView(DockView):
     def _refresh_breakpoints(self):
         self._bps.clear()
         project = self.ctx.project
+        muted = self.ctx.breakpoints.muted
+        bp_icon = icons.icon("mute_breakpoints" if muted else "breakpoint", "#db5c5c", 14)
         items = list(self.ctx.breakpoints.all())
         for path, line in items:
             name = project.relative(path) if project and project.contains(path) else path
-            item = QListWidgetItem(icons.icon("breakpoint", "#db5c5c", 14),
-                                   f"{name.replace(os.sep, '/')} : {line}")
+            item = QListWidgetItem(bp_icon, f"{name.replace(os.sep, '/')} : {line}")
             item.setData(Qt.UserRole, (path, line))
+            if muted:
+                item.setForeground(QBrush(QColor("#6f737a")))
             self._bps.addItem(item)
-        self._bp_label.setText(f"Breakpoint'ler ({len(items)})" if items else "Breakpoint'ler")
+        label = f"Breakpoint'ler ({len(items)})" if items else "Breakpoint'ler"
+        self._bp_label.setText(f"{label} — kapalı" if muted else label)
 
     def _open_breakpoint(self, item):
         path, line = item.data(Qt.UserRole)

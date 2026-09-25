@@ -14,11 +14,24 @@ def _key(path: str) -> str:
 
 class BreakpointStore(QObject):
     changed = Signal(str)   # değişen dosya yolu
+    muted_changed = Signal(bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._lines: Dict[str, Set[int]] = {}
         self._display: Dict[str, str] = {}
+        self._muted = False
+
+    # ---- geçici kapatma (IntelliJ'deki "Mute Breakpoints") ---------------- #
+    @property
+    def muted(self) -> bool:
+        return self._muted
+
+    def set_muted(self, muted: bool) -> None:
+        muted = bool(muted)
+        if muted != self._muted:
+            self._muted = muted
+            self.muted_changed.emit(muted)
 
     def lines(self, path: str) -> Set[int]:
         return set(self._lines.get(_key(path), set()))
@@ -54,6 +67,10 @@ class BreakpointStore(QObject):
 
     def as_dict(self) -> Dict[str, List[int]]:
         return {self._display[k]: sorted(v) for k, v in self._lines.items() if v}
+
+    def active(self) -> Dict[str, List[int]]:
+        """Debugger'a gönderilecek breakpoint'ler; kapalıyken boştur."""
+        return {} if self._muted else self.as_dict()
 
     def all(self) -> List[tuple]:
         return [(self._display[k], line) for k, v in sorted(self._lines.items()) for line in sorted(v)]

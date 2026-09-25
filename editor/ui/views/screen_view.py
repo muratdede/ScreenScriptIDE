@@ -456,8 +456,8 @@ class ScreenView(DockView):
             b.setToolTip("Canlı görüntüyü durdur; son kare ekranda kalır (Ctrl+Shift+G)")
         else:
             has_image = self._canvas.image is not None
-            b.setText("Devam" if has_image else "Yakala")
-            b.setIcon(icons.icon("live", "#db5c5c") if has_image else icons.icon("camera"))
+            b.setText("Yakala")
+            b.setIcon(icons.icon("camera"))
             b.setObjectName("")
             b.setToolTip("Canlı görüntüyü başlat (Ctrl+Shift+G)")
             if has_image and not self._failed:

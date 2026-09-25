@@ -47,6 +47,7 @@ _ICONS = {
                  'M6.4 6l3.2 4M9.6 6l-3.2 4"/>',
     "frames": '<path d="M8 2l6 3-6 3-6-3z"/><path d="M2 8l6 3 6-3M2 11l6 3 6-3"/>',
     "breakpoint": '<circle cx="8" cy="8" r="4.6" fill="{c}" stroke="none"/>',
+    "mute_breakpoints": '<circle cx="8" cy="8" r="4.6"/><path d="M2.5 13.5l11-11"/>',
     "breakpoints": '<circle cx="6" cy="6" r="3.4" fill="{c}" stroke="none"/><circle cx="10.5" cy="10.5" r="3.4"/>',
     "settings": '<path d="M6.9 1.6h2.2l.4 1.9 1.3.7 1.8-.7 1.1 1.9-1.4 1.3v1.5l1.4 1.3-1.1 1.9-1.8-.7-1.3.7'
                 '-.4 1.9H6.9l-.4-1.9-1.3-.7-1.8.7-1.1-1.9 1.4-1.3V7.2L2.3 5.9l1.1-1.9 1.8.7 1.3-.7z"/>'
