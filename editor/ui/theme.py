@@ -28,6 +28,7 @@ class Theme:
     breakpoint = QColor("#db5c5c")
     debug_arrow = QColor("#f2c55c")
     selection = QColor("#214283")
+    find_match = QColor("#32593d")
     tree_selection = QColor("#2e436e")
 
     run_green = QColor("#5fb865")
@@ -188,6 +189,13 @@ class Theme:
                 background: #2b2d30; }}
             QCheckBox::indicator:hover {{ border-color: #9da0a8; }}
             QCheckBox::indicator:checked {{ background: #3574f0; border-color: #3574f0; image: url({check}); }}
+
+            QRadioButton {{ spacing: 6px; }}
+            QRadioButton::indicator {{ width: 14px; height: 14px; border-radius: 8px; border: 1px solid #6f737a;
+                background: #2b2d30; }}
+            QRadioButton::indicator:hover {{ border-color: #9da0a8; }}
+            QRadioButton::indicator:checked {{ border: 4px solid #3574f0; background: #ffffff; width: 8px;
+                height: 8px; }}
 
             QPushButton {{ background: #2b2d30; color: #dfe1e5; border: 1px solid #4e5157; border-radius: 5px;
                 padding: 5px 14px; }}

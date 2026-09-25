@@ -73,6 +73,7 @@ class MainWindow(QMainWindow):
         self.run_controller = RunController(ctx, self)
 
         self._actions: Dict[str, QAction] = {}
+        self._find_dialog = None
         self._create_actions()
         self.views: Dict[str, DockView] = {}
         self._view_actions: Dict[str, QAction] = {}
@@ -90,6 +91,7 @@ class MainWindow(QMainWindow):
         bus.run_requested.connect(lambda path, debug: self.run_controller.run(debug=debug, script=path))
         bus.run_started.connect(lambda *_: self.views["console"].reveal() if "console" in self.views else None)
         bus.debug_paused.connect(self._on_paused)
+        bus.status_message.connect(lambda text: self.statusBar().showMessage(text, 5000))
         ctx.session.state_changed.connect(self._update_run_actions)
         ctx.grabber.live_changed.connect(self._on_live_changed)
         self._update_run_actions(SessionState.IDLE)
@@ -189,8 +191,16 @@ class MainWindow(QMainWindow):
           "Ctrl+Shift+Space ile editör içinde de açılır")
         A("comment", "Yorum Aç/Kapat", lambda: self._editor_call("toggle_comment"), None)
         A("goto", "Satıra Git…", self.goto_line, "Ctrl+G")
+        A("goto_def", "Tanıma Git", lambda: self._editor_call("go_to_definition"), ["Ctrl+B", "F12"],
+          "Ctrl+tık ile de gidilir")
+        A("find", "Bul…", lambda: self._editor_call("show_find", False), "Ctrl+F", icon="search")
+        A("replace", "Değiştir…", lambda: self._editor_call("show_find", True), "Ctrl+R")
+        A("find_next", "Sonrakini Bul", lambda: self._editor_call("find_next"), "F3")
+        A("find_prev", "Öncekini Bul", lambda: self._editor_call("find_previous"), "Shift+F3")
+        A("find_files", "Dosyalarda Bul…", lambda: self.find_in_files(False), "Ctrl+Shift+F", icon="search")
+        A("replace_files", "Dosyalarda Değiştir…", lambda: self.find_in_files(True), "Ctrl+Shift+R")
 
-        A("run", "Çalıştır", lambda: rc.run(debug=False), ["Ctrl+R", "Shift+F10"], "Debug olmadan çalıştır",
+        A("run", "Çalıştır", lambda: rc.run(debug=False), ["Shift+F10", "Ctrl+F5"], "Debug olmadan çalıştır",
           icon="run", color=green)
         A("debug", "Debug", self._debug, ["F5", "Shift+F9"], "Debug başlat ya da devam et", icon="bug", color=green)
         A("stop", "Durdur", rc.stop, ["Shift+F5", "Ctrl+F2"], icon="stop", color=red)
@@ -218,7 +228,14 @@ class MainWindow(QMainWindow):
         m.addAction(a["quit"])
 
         m = root.addMenu("Düzen")
-        m.addActions([a["complete"], a["signature"], a["comment"], a["goto"]])
+        m.addActions([a["find"], a["replace"], a["find_next"], a["find_prev"]])
+        m.addSeparator()
+        m.addActions([a["find_files"], a["replace_files"]])
+        m.addSeparator()
+        m.addActions([a["complete"], a["signature"], a["comment"]])
+
+        m = root.addMenu("Git")
+        m.addActions([a["goto_def"], a["goto"]])
 
         m = root.addMenu("Çalıştır")
         m.addActions([a["run"], a["debug"], a["stop"], a["pause"]])
@@ -299,6 +316,9 @@ class MainWindow(QMainWindow):
         tb.addWidget(more)
 
         tb.addWidget(_spacer(24))
+        search_btn = QToolButton()
+        search_btn.setDefaultAction(a["find_files"])
+        tb.addWidget(search_btn)
         self._live_btn = QToolButton()
         self._live_btn.setDefaultAction(a["grab"])
         tb.addWidget(self._live_btn)
@@ -351,6 +371,14 @@ class MainWindow(QMainWindow):
     def _on_cursor(self, line: int, col: int) -> None:
         self._pos_label.setText(f"{line}:{col}" if line else "")
         self._enc_label.setVisible(bool(line))
+
+    def find_in_files(self, replace: bool) -> None:
+        from .find_in_files import FindInFilesDialog
+        if self._find_dialog is None:
+            self._find_dialog = FindInFilesDialog(self.ctx, self)
+        editor = self.tabs.current_editor()
+        selected = editor.textCursor().selectedText() if editor else ""
+        self._find_dialog.open_with(selected if selected and " " not in selected else "", replace)
 
     def _editor_call(self, method: str, *args) -> None:
         editor = self.tabs.current_editor()

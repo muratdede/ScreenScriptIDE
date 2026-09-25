@@ -4,13 +4,14 @@ imza yardımı ve üzerine gelince açıklama/görsel önizleme."""
 from __future__ import annotations
 
 import html
+import keyword
 import os
 import re
 from functools import lru_cache
-from typing import Optional
+from typing import Callable, List, Optional, Tuple
 
 from PySide6.QtCore import QModelIndex, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import (QColor, QGuiApplication, QIcon, QPainter, QPixmap, QStandardItem,
+from PySide6.QtGui import (QColor, QCursor, QGuiApplication, QIcon, QPainter, QPixmap, QStandardItem,
                            QStandardItemModel, QTextCursor, QTextDocument, QTextFormat)
 from PySide6.QtWidgets import QCompleter, QLabel, QPlainTextEdit, QTextEdit, QToolTip, QWidget
 
@@ -22,6 +23,19 @@ from .theme import THEME
 INDENT = "    "
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp")
 _IDENT_BEFORE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*$")
+_IDENT = re.compile(r"[^\W\d]\w*")
+_IMAGE_LITERAL = re.compile(r"""(["'])([^"'\n]+\.(?:png|jpg|jpeg|bmp))\1""", re.IGNORECASE)
+
+
+def _utf16_mapper(text: str) -> Callable[[int], int]:
+    """Python str indeksini QTextDocument (UTF-16) konumuna çevirir. Emoji gibi BMP dışı karakter
+    yoksa ikisi aynıdır."""
+    if all(ord(ch) < 0x10000 for ch in text):
+        return lambda i: i
+    prefix = [0]
+    for ch in text:
+        prefix.append(prefix[-1] + (2 if ord(ch) >= 0x10000 else 1))
+    return lambda i: prefix[min(max(i, 0), len(text))]
 _KIND_COLORS = {"function": "#56a8f5", "class": "#e5c07b", "keyword": "#cf8e6d", "module": "#c678dd",
                 "instance": "#56b6c2", "statement": "#98c379", "param": "#d19a66", "property": "#b3ae60"}
 
@@ -128,6 +142,7 @@ class CodeEditor(QPlainTextEdit):
         self._path = os.path.abspath(path)
         self._ctx = ctx
         self._debug_line = 0
+        self._find_bar = None   # bul/değiştir çubuğu (ilk Ctrl+F'de oluşturulur)
 
         self.setFont(THEME.code_font())
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
@@ -161,6 +176,18 @@ class CodeEditor(QPlainTextEdit):
         self.verticalScrollBar().valueChanged.connect(self._on_scroll_for_signature)
         self.horizontalScrollBar().valueChanged.connect(self._on_scroll_for_signature)
         self.destroyed.connect(self._sig_popup.deleteLater)
+
+        # bul / değiştir (Ctrl+F / Ctrl+R)
+        self._find_ranges: List[Tuple[int, int]] = []   # QTextDocument konumları (başlangıç, bitiş)
+        self._find_query = None
+        self._find_pattern = None
+        self._find_timer = QTimer(self, singleShot=True, interval=150)
+        self._find_timer.timeout.connect(lambda: self.find_update(select=False))
+        self.document().contentsChanged.connect(self._on_contents_for_find)
+
+        # Ctrl+tık ile tanıma git: Ctrl basılıyken imlecin altındaki isim bağlantı gibi çizilir
+        self._link: Optional[Tuple[int, int]] = None
+        self.viewport().setMouseTracking(True)
 
     # ---- dosya ----------------------------------------------------------- #
     @property
@@ -210,8 +237,12 @@ class CodeEditor(QPlainTextEdit):
         digits = max(3, len(str(self.blockCount())))
         return 24 + self.fontMetrics().horizontalAdvance("9") * digits + 8
 
+    def _find_bar_height(self) -> int:
+        bar = self._find_bar
+        return bar.sizeHint().height() if bar is not None and bar.isVisible() else 0
+
     def _update_gutter_width(self, *_):
-        self.setViewportMargins(self.gutter_width(), 0, 0, 0)
+        self.setViewportMargins(self.gutter_width(), self._find_bar_height(), 0, 0)
 
     def _on_update_request(self, rect, dy):
         if dy:
@@ -223,8 +254,15 @@ class CodeEditor(QPlainTextEdit):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.relayout_find_bar()
+
+    def relayout_find_bar(self) -> None:
         cr = self.contentsRect()
-        self._gutter.setGeometry(QRect(cr.left(), cr.top(), self.gutter_width(), cr.height()))
+        top = self._find_bar_height()
+        self._update_gutter_width()
+        self._gutter.setGeometry(QRect(cr.left(), cr.top() + top, self.gutter_width(), cr.height() - top))
+        if self._find_bar is not None and self._find_bar.isVisible():
+            self._find_bar.setGeometry(QRect(cr.left(), cr.top(), cr.width(), top))
 
     def paint_gutter(self, event):
         painter = QPainter(self._gutter)
@@ -285,8 +323,275 @@ class CodeEditor(QPlainTextEdit):
                 dbg.format.setProperty(QTextFormat.FullWidthSelection, True)
                 dbg.cursor = QTextCursor(block)
                 selections.append(dbg)
+        if self._find_ranges and self._find_bar is not None and self._find_bar.isVisible():
+            for start, end in self._find_ranges[:self.MAX_HIGHLIGHTS]:
+                sel = QTextEdit.ExtraSelection()
+                sel.format.setBackground(THEME.find_match)
+                sel.cursor = self._range_cursor(start, end)
+                selections.append(sel)
+        if self._link:
+            link = QTextEdit.ExtraSelection()
+            link.format.setForeground(QColor("#548af7"))
+            link.format.setFontUnderline(True)
+            link.cursor = self._range_cursor(*self._link)
+            selections.append(link)
         self.setExtraSelections(selections)
         self._gutter.update()
+
+    def _range_cursor(self, start: int, end: int) -> QTextCursor:
+        c = QTextCursor(self.document())
+        c.setPosition(start)
+        c.setPosition(end, QTextCursor.KeepAnchor)
+        return c
+
+    # ---- bul / değiştir (Ctrl+F / Ctrl+R) -------------------------------- #
+    MAX_HIGHLIGHTS = 3000
+
+    def show_find(self, replace: bool = False) -> None:
+        from .find_bar import FindBar
+        if self._find_bar is None:
+            self._find_bar = FindBar(self)
+        bar = self._find_bar
+        selected = self.textCursor().selectedText()
+        if selected and " " not in selected:   # tek satırlık seçim arama metni olur
+            bar.find_edit.blockSignals(True)
+            bar.find_edit.setText(selected)
+            bar.find_edit.blockSignals(False)
+        bar.show()
+        bar.set_replace_mode(replace)
+        self.relayout_find_bar()
+        bar.find_edit.setFocus()
+        bar.find_edit.selectAll()
+        self.find_update(select=not self.textCursor().hasSelection())
+
+    def hide_find(self) -> None:
+        if self._find_bar is not None and self._find_bar.isVisible():
+            self._find_bar.hide()
+            self._find_ranges = []
+            self.relayout_find_bar()
+            self._update_extra_selections()
+            self.setFocus()
+
+    @property
+    def find_visible(self) -> bool:
+        return self._find_bar is not None and self._find_bar.isVisible()
+
+    def _on_contents_for_find(self) -> None:
+        if self.find_visible:
+            self._find_timer.start()
+
+    def find_update(self, select: bool = True) -> None:
+        """Eşleşmeleri yeniden hesaplar ve vurgular. select: imleçten sonraki ilk eşleşmeyi seç."""
+        bar = self._find_bar
+        if bar is None:
+            return
+        query = bar.query()
+        try:
+            pattern = query.compile()
+        except re.error:
+            self._find_ranges, self._find_pattern = [], None
+            bar.set_count(0, 0, "Hatalı regex")
+            self._update_extra_selections()
+            return
+        self._find_query, self._find_pattern = query, pattern
+        self._find_ranges = []
+        if pattern is not None:
+            text = self.toPlainText()
+            to_doc = _utf16_mapper(text)
+            for m in pattern.finditer(text):
+                if m.end() > m.start():
+                    self._find_ranges.append((to_doc(m.start()), to_doc(m.end())))
+        if select and self._find_ranges:
+            start = self.textCursor().selectionStart()
+            index = next((i for i, (s, _e) in enumerate(self._find_ranges) if s >= start), 0)
+            self._select_match(index)
+        else:
+            self._update_find_count()
+            self._update_extra_selections()
+
+    def _current_match_index(self) -> int:
+        c = self.textCursor()
+        key = (c.selectionStart(), c.selectionEnd())
+        try:
+            return self._find_ranges.index(key)
+        except ValueError:
+            return -1
+
+    def _update_find_count(self) -> None:
+        if self._find_bar is not None:
+            i = self._current_match_index()
+            self._find_bar.set_count(i + 1 if i >= 0 else 0, len(self._find_ranges))
+
+    def _select_match(self, index: int) -> None:
+        start, end = self._find_ranges[index]
+        self.setTextCursor(self._range_cursor(start, end))
+        if not self.viewport().rect().contains(self.cursorRect()):
+            self.centerCursor()
+        self._update_find_count()
+        self._update_extra_selections()
+
+    def find_next(self) -> None:
+        self._find_step(+1)
+
+    def find_previous(self) -> None:
+        self._find_step(-1)
+
+    def _find_step(self, direction: int) -> None:
+        if self._find_bar is None:
+            self.show_find()
+            return
+        if not self._find_ranges:
+            self.find_update(select=False)
+        if not self._find_ranges:
+            return
+        c = self.textCursor()
+        if direction > 0:
+            pos = c.selectionEnd()
+            index = next((i for i, (s, _e) in enumerate(self._find_ranges) if s >= pos), 0)   # sona gelince başa
+        else:
+            pos = c.selectionStart()
+            index = next((i for i in range(len(self._find_ranges) - 1, -1, -1)
+                          if self._find_ranges[i][1] <= pos), len(self._find_ranges) - 1)
+        self._select_match(index)
+
+    def _replacement_for(self, doc_start: int, doc_end: int) -> Optional[str]:
+        """Seçili aralık bir eşleşmeyse yerine konacak metni döndürür (regex grupları açılır)."""
+        cursor = self._range_cursor(doc_start, doc_end)
+        m = self._find_pattern.fullmatch(cursor.selectedText().replace(" ", "\n"))
+        return self._find_query.expand(m, self._find_bar.replace_edit.text()) if m else None
+
+    def replace_current(self) -> None:
+        if self._find_bar is None or self._find_pattern is None:
+            return
+        index = self._current_match_index()
+        if index < 0:
+            self.find_next()
+            return
+        start, end = self._find_ranges[index]
+        text = self._replacement_for(start, end)
+        if text is not None:
+            c = self._range_cursor(start, end)
+            c.insertText(text)
+            self.setTextCursor(c)   # imleç değiştirilen metnin sonunda: sıradaki eşleşmeye geç
+        self.find_update(select=False)
+        if self._find_ranges:
+            self.find_next()
+
+    def replace_all(self) -> None:
+        if self._find_bar is None or self._find_pattern is None or not self._find_ranges:
+            return
+        count = 0
+        edit = QTextCursor(self.document())
+        edit.beginEditBlock()   # tek Ctrl+Z ile geri alınır
+        for start, end in reversed(self._find_ranges):
+            text = self._replacement_for(start, end)
+            if text is not None:
+                c = self._range_cursor(start, end)
+                c.insertText(text)
+                count += 1
+        edit.endEditBlock()
+        self.find_update(select=False)
+        self._ctx.bus.status_message.emit(f"{count} eşleşme değiştirildi")
+
+    def replace_document_text(self, text: str) -> None:
+        """Tüm metni tek bir geri alınabilir adımda değiştirir; imleç satırı korunur."""
+        line = self.current_line()
+        c = QTextCursor(self.document())
+        c.beginEditBlock()
+        c.select(QTextCursor.Document)
+        c.insertText(text)
+        c.endEditBlock()
+        self.go_to_line(line)
+
+    def select_match_at(self, line: int, column: int, length: int) -> None:
+        """Dosyalarda bul sonucundan gelince: satır + (Python str) sütun + uzunluk aralığını seç."""
+        block = self.document().findBlockByNumber(max(0, line - 1))
+        if not block.isValid():
+            return
+        to_doc = _utf16_mapper(block.text())
+        start = block.position() + to_doc(column)
+        end = block.position() + to_doc(min(len(block.text()), column + length))
+        self.setTextCursor(self._range_cursor(start, end))
+        self.centerCursor()
+
+    # ---- Ctrl+tık: tanıma git -------------------------------------------- #
+    def _link_range_at(self, pos: QPoint) -> Optional[Tuple[int, int]]:
+        cursor = self.cursorForPosition(pos)
+        # imleç satır sonunun ötesindeyse bağlantı yok
+        if self.cursorRect(cursor).right() + self.fontMetrics().horizontalAdvance("M") < pos.x():
+            return None
+        block = cursor.block()
+        text, col = block.text(), cursor.positionInBlock()
+        to_doc = _utf16_mapper(text)
+        for m in _IMAGE_LITERAL.finditer(text):   # "images/x.png" -> görseli aç
+            if m.start() <= col <= m.end():
+                return block.position() + to_doc(m.start()), block.position() + to_doc(m.end())
+        for m in _IDENT.finditer(text):
+            if m.start() <= col <= m.end() and not keyword.iskeyword(m.group(0)):
+                return block.position() + to_doc(m.start()), block.position() + to_doc(m.end())
+        return None
+
+    def _set_link(self, rng: Optional[Tuple[int, int]]) -> None:
+        if rng != self._link:
+            self._link = rng
+            self.viewport().setCursor(Qt.PointingHandCursor if rng else Qt.IBeamCursor)
+            self._update_extra_selections()
+
+    def mouseMoveEvent(self, e):
+        if e.modifiers() & Qt.ControlModifier and not e.buttons():
+            self._set_link(self._link_range_at(e.position().toPoint()))
+        elif self._link:
+            self._set_link(None)
+        super().mouseMoveEvent(e)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton and e.modifiers() & Qt.ControlModifier:
+            rng = self._link_range_at(e.position().toPoint())
+            if rng:
+                self._set_link(None)
+                self.go_to_definition(rng[0], e.globalPosition().toPoint())
+                return
+        super().mousePressEvent(e)
+
+    def keyReleaseEvent(self, e):
+        if e.key() == Qt.Key_Control:
+            self._set_link(None)
+        super().keyReleaseEvent(e)
+
+    def leaveEvent(self, e):
+        self._set_link(None)
+        super().leaveEvent(e)
+
+    def go_to_definition(self, doc_pos: Optional[int] = None, popup_at: Optional[QPoint] = None) -> None:
+        """doc_pos verilmezse imleçteki isim. Görsel literal'i ise görseli sekmede açar."""
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(self.textCursor().position() if doc_pos is None else doc_pos)
+        block, col = cursor.block(), cursor.positionInBlock()
+        for m in _IMAGE_LITERAL.finditer(block.text()):
+            if m.start() <= col <= m.end():
+                path = self._resolve_image(m.group(2))
+                if path:
+                    self._ctx.bus.open_file_requested.emit(path, 0)
+                else:
+                    self._no_definition(f"Görsel bulunamadı: {m.group(2)}", popup_at)
+                return
+        # jedi sütunu kelimenin içinde olmalı
+        pos = CodePosition(self.toPlainText(), block.blockNumber() + 1, col + 1 if doc_pos is not None else col,
+                           self._path)
+        target = self._ctx.completion.definition(pos)
+        if target is None:
+            self._no_definition("Tanım bulunamadı", popup_at)
+            return
+        editor = self if os.path.normcase(target.path) == os.path.normcase(self._path) else None
+        if editor is None:
+            editor = self._ctx.documents.open_path(target.path) if self._ctx.documents else None
+        if isinstance(editor, CodeEditor):
+            editor.select_match_at(target.line, target.column, len(target.name) or 1)
+            editor.setFocus()
+
+    def _no_definition(self, message: str, at: Optional[QPoint]) -> None:
+        at = at or self.viewport().mapToGlobal(self.cursorRect().bottomLeft())
+        QToolTip.showText(at, message, self)
 
     # ---- klavye ---------------------------------------------------------- #
     def keyPressEvent(self, event):
@@ -303,6 +608,13 @@ class CodeEditor(QPlainTextEdit):
         if key == Qt.Key_Escape and self._sig_popup.isVisible():
             self.hide_signature()
             return
+        if key == Qt.Key_Escape and self.find_visible:
+            self.hide_find()
+            return
+        if key == Qt.Key_Control:
+            local = self.viewport().mapFromGlobal(QCursor.pos())
+            if self.viewport().rect().contains(local):
+                self._set_link(self._link_range_at(local))
 
         if key == Qt.Key_Space and mods & Qt.ControlModifier and mods & Qt.ShiftModifier:
             self.show_signature(force=True)
@@ -591,7 +903,8 @@ class CodeEditor(QPlainTextEdit):
 
     def _resolve_image(self, name: str) -> Optional[str]:
         project = self._ctx.project
-        candidates = [name, os.path.join(os.path.dirname(self._path), name),
+        candidates = ([os.path.join(project.root, name)] if project else []) + [
+                      os.path.join(os.path.dirname(self._path), name),
                       os.path.join(os.path.dirname(self._path), "images", name)]
         if project:
             candidates += [os.path.join(d, name) for d in project.image_search_dirs()]

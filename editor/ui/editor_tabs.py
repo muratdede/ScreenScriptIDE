@@ -164,12 +164,23 @@ class EditorTabs(QTabWidget, DocumentService):
         return True
 
     def rename_path(self, old: str, new: str) -> None:
-        doc = self.find_document(old)
-        if doc:
-            doc.set_path(new)
+        """Dosya ya da klasör yeniden adlandırıldı: etkilenen sekmelerin yollarını güncelle."""
+        old_key = _norm(old)
+        for doc in self.documents():
+            key = _norm(doc.path)
+            if key == old_key:
+                target = new
+            elif key.startswith(old_key + os.sep):
+                target = os.path.join(new, os.path.abspath(doc.path)[len(os.path.abspath(old)) + 1:])
+            else:
+                continue
+            doc.set_path(target)
             i = self.indexOf(doc)
-            self.setTabText(i, os.path.basename(new))
-            self.setTabToolTip(i, new)
+            dirty = isinstance(doc, CodeEditor) and doc.is_dirty
+            self.setTabText(i, os.path.basename(target) + (" ●" if dirty else ""))
+            self.setTabToolTip(i, target)
+            self.setTabIcon(i, icons.file_icon(target))
+        self._on_current_changed(self.currentIndex())
 
     def _save(self, editor: CodeEditor) -> bool:
         try:
@@ -205,8 +216,9 @@ class EditorTabs(QTabWidget, DocumentService):
         # boş editör alanı: IntelliJ'deki gibi kısayol ipuçları
         p = QPainter(self)
         p.fillRect(self.rect(), THEME.background)
-        hints = [("Projeyi aç", "Ctrl+Shift+O"), ("Yeni script", "Ctrl+N"), ("Çalıştır", "Ctrl+R"),
-                 ("Debug", "F5"), ("Ekranı canlı yakala", "Ctrl+Shift+G"), ("Paneller", "Alt+1 … Alt+5")]
+        hints = [("Projeyi aç", "Ctrl+Shift+O"), ("Yeni script", "Ctrl+N"), ("Dosyalarda bul", "Ctrl+Shift+F"),
+                 ("Çalıştır", "Shift+F10"), ("Debug", "F5"), ("Ekranı canlı yakala", "Ctrl+Shift+G"),
+                 ("Paneller", "Alt+1 … Alt+5")]
         line_h = 28
         top = self.height() // 2 - len(hints) * line_h // 2
         mid = self.width() // 2

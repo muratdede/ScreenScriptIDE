@@ -8,6 +8,7 @@ from __future__ import annotations
 import builtins
 import keyword
 import logging
+import os
 import re
 import threading
 from abc import ABC, abstractmethod
@@ -35,6 +36,14 @@ class SignatureInfo:
     doc: str = ""
 
 
+@dataclass(frozen=True)
+class Definition:
+    path: str
+    line: int          # 1'den
+    column: int        # 0'dan
+    name: str = ""
+
+
 @dataclass
 class CodePosition:
     """line 1'den, column 0'dan başlar (jedi kuralı)."""
@@ -52,6 +61,10 @@ class CompletionProvider(ABC):
         return None
 
     def help(self, pos: CodePosition) -> Optional[str]:
+        return None
+
+    def definition(self, pos: CodePosition) -> Optional[Definition]:
+        """Ctrl+tık / Ctrl+B: imleçteki ismin tanımlandığı yer."""
         return None
 
 
@@ -133,6 +146,23 @@ class JediCompletionProvider(CompletionProvider):
         with self._lock:
             return self._help(pos)
 
+    def definition(self, pos):
+        with self._lock:
+            return self._definition(pos)
+
+    def _definition(self, pos):
+        script = self._interpreter(pos)
+        # goto: kaynağa en yakın tanım; script globalleri (click, SCREEN...) için dosya yolu vermez,
+        # o zaman infer ile nesnenin tanımlandığı modüle gidilir
+        for names in (script.goto(pos.line, pos.column, follow_imports=True),
+                      script.infer(pos.line, pos.column)):
+            for n in names:
+                path = str(n.module_path) if n.module_path else None
+                same_file = path and pos.path and os.path.normcase(path) == os.path.normcase(pos.path)
+                if path and n.line and (same_file or os.path.isfile(path)):
+                    return Definition(path, n.line, n.column or 0, n.name)
+        return None
+
     def _help(self, pos):
         names = self._interpreter(pos).help(pos.line, pos.column)
         for n in names:
@@ -194,6 +224,9 @@ class FallbackCompletionProvider(CompletionProvider):
 
     def help(self, pos):
         return self._try("help", pos)
+
+    def definition(self, pos):
+        return self._try("definition", pos)
 
 
 def create_default_provider(project_root: Optional[str] = None,

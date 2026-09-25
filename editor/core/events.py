@@ -16,6 +16,7 @@ class EventBus(QObject):
     active_file_changed = Signal(str)
     file_renamed = Signal(str, str)          # eski, yeni
     run_requested = Signal(str, bool)        # script, debug
+    status_message = Signal(str)             # durum çubuğunda kısa süreli mesaj
 
     # çalıştırma
     run_started = Signal(str, bool)          # script, debug

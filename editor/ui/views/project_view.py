@@ -5,10 +5,16 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import QDir, QFile, QModelIndex, Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QFont
+from typing import List
+
+from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QFileSystemModel, QInputDialog, QLabel, QMenu, QMessageBox, QStackedWidget,
                                QTreeView)
 
+from ...core import search
+from .. import icons
+from ..find_in_files import apply_text_change
+from ..rename_dialog import RenameDialog, image_references
 from .base import DockView
 
 
@@ -55,12 +61,17 @@ class ProjectView(DockView):
             self._tree.hideColumn(col)
         self._tree.setHeaderHidden(True)
         self._tree.setIndentation(14)
+        self._tree.setSelectionMode(QAbstractItemView.ExtendedSelection)   # Ctrl/Shift ile çoklu seçim
+        self._tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._tree.setDragEnabled(True)                     # görseli koda sürükle -> göreli yol
         self._tree.setDragDropMode(QAbstractItemView.DragOnly)
         self._tree.setDefaultDropAction(Qt.CopyAction)
         self._tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._context_menu)
         self._tree.doubleClicked.connect(self._activate)
+        for key, slot in (("F2", self.rename_current), ("Delete", self.delete_selected),
+                          ("Return", self.open_selected), ("Enter", self.open_selected)):
+            QShortcut(QKeySequence(key), self._tree, slot, context=Qt.WidgetShortcut)
         self._stack.addWidget(self._empty)
         self._stack.addWidget(self._tree)
         bus = self.ctx.bus
@@ -79,17 +90,40 @@ class ProjectView(DockView):
         self._model.main_script = project.main_script_path or ""
         self._tree.viewport().update()
 
+    # ---- seçim ----------------------------------------------------------- #
+    def selected_paths(self) -> List[str]:
+        """Seçili öğeler; seçili bir klasörün içindekiler ayrıca listelenmez."""
+        paths = []
+        for index in self._tree.selectionModel().selectedRows(0):
+            paths.append(os.path.normpath(self._model.filePath(index)))
+        paths = sorted(set(paths))
+        return [p for p in paths if not any(p != q and p.startswith(q + os.sep) for q in paths)]
+
+    def _current_path(self) -> str:
+        index = self._tree.currentIndex()
+        return os.path.normpath(self._model.filePath(index)) if index.isValid() else ""
+
     # ---- etkileşim ------------------------------------------------------- #
     def _activate(self, index: QModelIndex):
-        path = self._model.filePath(index)
+        self._open_path(self._model.filePath(index))
+
+    def _open_path(self, path: str):
         if os.path.isdir(path):
             return
-        if path.lower().endswith(TEXT_EXTENSIONS):
-            self.ctx.bus.open_file_requested.emit(path, 0)
-        elif path.lower().endswith((".png", ".jpg", ".jpeg", ".bmp")):
+        if path.lower().endswith(TEXT_EXTENSIONS + (".png", ".jpg", ".jpeg", ".bmp")):
             self.ctx.bus.open_file_requested.emit(path, 0)
         else:
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def open_selected(self):
+        paths = self.selected_paths()
+        dirs = [p for p in paths if os.path.isdir(p)]
+        if len(paths) == 1 and dirs:   # tek klasör: aç/kapat
+            index = self._tree.currentIndex()
+            self._tree.setExpanded(index, not self._tree.isExpanded(index))
+            return
+        for p in paths:
+            self._open_path(p)
 
     def _selected_dir(self, index: QModelIndex) -> str:
         if not index.isValid():
@@ -101,19 +135,28 @@ class ProjectView(DockView):
         if self.ctx.project is None:
             return
         index = self._tree.indexAt(pos)
-        path = self._model.filePath(index) if index.isValid() else ""
+        path = os.path.normpath(self._model.filePath(index)) if index.isValid() else ""
+        selected = self.selected_paths()
         menu = QMenu(self)
-        menu.addAction("Yeni script…", lambda: self._new_script(self._selected_dir(index)))
-        menu.addAction("Yeni klasör…", lambda: self._new_folder(self._selected_dir(index)))
+        if path and len(selected) > 1 and path in selected:
+            menu.addAction(f"{len(selected)} öğe seçili").setEnabled(False)
+            menu.addSeparator()
+            menu.addAction("Aç\tEnter", self.open_selected)
+            menu.addAction(icons.icon("trash"), "Sil…\tDelete", self.delete_selected)
+            menu.exec(self._tree.viewport().mapToGlobal(pos))
+            return
+        menu.addAction(icons.icon("python", "#548af7"), "Yeni script…",
+                       lambda: self._new_script(self._selected_dir(index)))
+        menu.addAction(icons.icon("folder"), "Yeni klasör…", lambda: self._new_folder(self._selected_dir(index)))
         if path and os.path.isfile(path) and path.endswith(".py"):
             menu.addSeparator()
             menu.addAction("Ana script yap", lambda: self._set_main(path))
-            menu.addAction("Çalıştır", lambda: self._run(path, False))
-            menu.addAction("Debug", lambda: self._run(path, True))
+            menu.addAction(icons.icon("run", "#5fb865"), "Çalıştır", lambda: self._run(path, False))
+            menu.addAction(icons.icon("bug", "#5fb865"), "Debug", lambda: self._run(path, True))
         if path:
             menu.addSeparator()
-            menu.addAction("Yeniden adlandır…", lambda: self._rename(path))
-            menu.addAction("Sil", lambda: self._delete(path))
+            menu.addAction("Yeniden adlandır…\tF2", lambda: self.rename(path))
+            menu.addAction(icons.icon("trash"), "Sil…\tDelete", lambda: self.delete([path]))
             menu.addAction("Klasörde göster", lambda: QDesktopServices.openUrl(
                 QUrl.fromLocalFile(path if os.path.isdir(path) else os.path.dirname(path))))
         menu.exec(self._tree.viewport().mapToGlobal(pos))
@@ -139,22 +182,70 @@ class ProjectView(DockView):
     def _run(self, path: str, debug: bool):
         self.ctx.bus.run_requested.emit(path, debug)
 
-    def _rename(self, path: str):
-        name, ok = QInputDialog.getText(self, "Yeniden adlandır", "Yeni ad:", text=os.path.basename(path))
-        if not ok or not name.strip() or name == os.path.basename(path):
+    # ---- yeniden adlandır (F2) ------------------------------------------- #
+    def rename_current(self):
+        path = self._current_path()
+        if path and self.ctx.project and os.path.normcase(path) != os.path.normcase(self.ctx.project.root):
+            self.rename(path)
+
+    def rename(self, path: str):
+        project = self.ctx.project
+        dialog = RenameDialog(self.ctx, path, self)
+        if not dialog.exec():
             return
-        new = os.path.join(os.path.dirname(path), name.strip())
-        if os.path.exists(new):
-            QMessageBox.warning(self, "Var", f"{name} zaten var.")
+        new = dialog.new_path
+        forms = image_references(project, path)[0] if dialog.update_references else None
+        try:
+            os.rename(path, new)
+        except OSError as e:
+            QMessageBox.warning(self, "Yeniden adlandırılamadı", str(e))
             return
-        os.rename(path, new)
+        if forms:
+            self._update_references(forms, path, new)
+        main = project.main_script_path
+        if main and (os.path.normcase(main) == os.path.normcase(path)
+                     or os.path.normcase(main).startswith(os.path.normcase(path) + os.sep)):
+            project.config.main_script = project.relative(new + main[len(path):])
+            self.ctx.save_project_config()
         self.ctx.bus.file_renamed.emit(path, new)
         self.ctx.bus.images_changed.emit()
+        index = self._model.index(new)
+        if index.isValid():
+            self._tree.setCurrentIndex(index)
 
-    def _delete(self, path: str):
-        if QMessageBox.question(self, "Sil", f"{os.path.basename(path)} çöp kutusuna taşınsın mı?") \
-                != QMessageBox.Yes:
+    def _update_references(self, forms, old: str, new: str):
+        project = self.ctx.project
+        new_rel = project.relative(new).replace(os.sep, "/")
+        mapping = {}
+        for form in forms:
+            mapping[form] = new_rel if "/" in form else os.path.basename(new)
+        pattern = search.string_literal_pattern(list(mapping))
+        total = files = 0
+        for path in search.iter_files(project.root, ["*.py"]):
+            n = apply_text_change(self.ctx, path, lambda text: pattern.subn(
+                lambda m: m.group(1) + mapping[m.group(2)] + m.group(1), text))
+            if n:
+                total, files = total + n, files + 1
+        self.ctx.bus.status_message.emit(f"{files} dosyada {total} referans güncellendi")
+
+    # ---- sil (Delete) ---------------------------------------------------- #
+    def delete_selected(self):
+        paths = self.selected_paths()
+        if self.ctx.project:
+            paths = [p for p in paths if os.path.normcase(p) != os.path.normcase(self.ctx.project.root)]
+        if paths:
+            self.delete(paths)
+
+    def delete(self, paths: List[str]):
+        if len(paths) == 1:
+            question = f"“{os.path.basename(paths[0])}” çöp kutusuna taşınsın mı?"
+        else:
+            names = "\n".join("  • " + os.path.basename(p) for p in paths[:12])
+            more = f"\n  … ve {len(paths) - 12} öğe daha" if len(paths) > 12 else ""
+            question = f"{len(paths)} öğe çöp kutusuna taşınsın mı?\n\n{names}{more}"
+        if QMessageBox.question(self, "Sil", question) != QMessageBox.Yes:
             return
-        if not QFile.moveToTrash(path):
-            QMessageBox.warning(self, "Silinemedi", path)
+        failed = [p for p in paths if not QFile.moveToTrash(p)]
+        if failed:
+            QMessageBox.warning(self, "Silinemedi", "\n".join(failed))
         self.ctx.bus.images_changed.emit()
