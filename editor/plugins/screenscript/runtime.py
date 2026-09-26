@@ -19,14 +19,15 @@ from typing import Any, Callable, Dict, Optional
 from ..adb_capture import AdbDevice, FrameSource, ScreencapFormat, create_source
 
 from .engine import Engine
-from .errors import FindFailed, ImageNotFound, NotificationError, ScriptError
+from .errors import FindFailed, ImageNotFound, NotificationError, ScriptError, TextNotFound
 from .geometry import Location, Rect
 from .input import (AdbInputDriver, HumanizedInputDriver, InputDriver, Key)
 from .matching import Matcher, MultiScaleMatcher, TemplateMatcher
 from .notify import Notifier, NullNotifier
+from .ocr import OcrUnavailable, TextReader
 from .pattern import ImageLibrary, ImagePath, Pattern
 from .providers import BackgroundProvider, ImageProvider, OnDemandProvider
-from .region import Match, Region, Screen
+from .region import Match, Region, Screen, TextMatch
 from .settings import Settings
 
 log = logging.getLogger("script")
@@ -70,8 +71,9 @@ class ScriptContext:
             "SCREEN": s, "SETTINGS": self.engine.settings, "ARGS": dict(args or {}),
             # tipler
             "Pattern": Pattern, "Region": lambda x, y, w, h: Region(Rect(x, y, w, h), self.engine),
-            "Location": Location, "Match": Match, "Key": Key,
+            "Location": Location, "Match": Match, "TextMatch": TextMatch, "Key": Key,
             "FindFailed": FindFailed, "ImageNotFound": ImageNotFound,
+            "TextNotFound": TextNotFound, "OcrUnavailable": OcrUnavailable,
             "NotificationError": NotificationError,
             # SCREEN kısayolları (SikuliX'teki gibi global fonksiyonlar)
             "find": s.find, "find_all": s.find_all, "exists": s.exists, "wait": s.wait,
@@ -79,6 +81,9 @@ class ScriptContext:
             "click": s.click, "long_press": s.long_press, "drag_drop": s.drag_drop,
             "swipe": s.swipe, "type_text": s.type_text, "key": s.key,
             "highlight": s.highlight, "capture": s.capture,
+            # metin (OCR)
+            "read_text": s.text, "read_lines": s.read_lines, "find_text": s.find_text,
+            "exists_text": s.exists_text, "wait_text": s.wait_text,
             # genel
             "sleep": time.sleep, "log": log.info,
             "add_image_path": self.engine.library.image_path.add,
@@ -113,6 +118,7 @@ class ContextBuilder:
     _input: Optional[InputDriver] = None
     _input_decorators: list = field(default_factory=list)
     _notifier: Optional[Notifier] = None
+    _text_reader: Optional[TextReader] = None
 
     def with_source(self, source: FrameSource) -> "ContextBuilder":
         self._source = source
@@ -136,6 +142,11 @@ class ContextBuilder:
 
     def with_notifier(self, notifier: Notifier) -> "ContextBuilder":
         self._notifier = notifier
+        return self
+
+    def with_text_reader(self, reader: TextReader) -> "ContextBuilder":
+        """Varsayılan: Settings.ocr_backend'e göre create_text_reader()."""
+        self._text_reader = reader
         return self
 
     def build(self) -> ScriptContext:
@@ -163,7 +174,8 @@ class ContextBuilder:
                         matcher=self._matcher or TemplateMatcher(),
                         input_driver=driver,
                         library=ImageLibrary(ImagePath(self.image_dirs)),
-                        settings=self.settings)
+                        settings=self.settings,
+                        text_reader=self._text_reader)
         return ScriptContext(engine, self._notifier)
 
 

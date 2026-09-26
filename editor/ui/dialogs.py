@@ -17,6 +17,8 @@ from ..core.project import Project, ProjectConfig
 
 
 class ProjectSettingsDialog(QDialog):
+    OCR_BACKENDS = [("auto", "Otomatik"), ("rapid", "RapidOCR (isabetli)"), ("windows", "Windows OCR (hızlı)")]
+
     def __init__(self, project: Project, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Proje Ayarları — {project.name}")
@@ -32,6 +34,11 @@ class ProjectSettingsDialog(QDialog):
         self.scales.setToolTip("Çoklu ölçekli arama her zaman açıktır. Denenecek ölçekler, virgülle.\n"
                                "Daha fazla ölçek = daha toleranslı ama daha yavaş arama. 1.0 her zaman eklenir.")
         self.grayscale = QCheckBox("Gri tonlamada eşleştir (daha hızlı)", checked=c.grayscale)
+        self.ocr = QComboBox()
+        for value, label in self.OCR_BACKENDS:
+            self.ocr.addItem(label, value)
+        self.ocr.setCurrentIndex(max(0, self.ocr.findData(c.ocr)))
+        self.ocr.setToolTip("read_text / find_text için motor. Otomatik: kurulu olanlardan RapidOCR, yoksa Windows.")
 
         # çalıştırma
         self.main_script = QLineEdit(c.main_script)
@@ -46,7 +53,8 @@ class ProjectSettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(self._group("Eşleştirme", [
             ("Varsayılan eşik", self.similarity), ("Bekleme süresi (sn)", self.timeout),
-            ("Tarama hızı (/sn)", self.scan_rate), ("Ölçekler (her zaman açık)", self.scales), ("", self.grayscale)]))
+            ("Tarama hızı (/sn)", self.scan_rate), ("Ölçekler (her zaman açık)", self.scales), ("", self.grayscale),
+            ("Metin okuma (OCR)", self.ocr)]))
         layout.addWidget(self._group("Çalıştırma", [
             ("Ana script", main_row), ("Görsel klasörleri", self.image_dirs),
             ("", self.humanize), ("", self.save_on_fail), ("Script argümanları", self.args)]))
@@ -90,6 +98,7 @@ class ProjectSettingsDialog(QDialog):
         c.scan_rate = self.scan_rate.value()
         c.scales = ProjectConfig.normalize_scales(self.scales.text().replace(";", ",").split(","))
         c.grayscale = self.grayscale.isChecked()
+        c.ocr = self.ocr.currentData()
         c.main_script = self.main_script.text().strip()
         c.humanize = self.humanize.isChecked()
         c.save_on_fail = self.save_on_fail.isChecked()

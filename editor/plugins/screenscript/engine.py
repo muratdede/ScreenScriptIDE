@@ -15,6 +15,7 @@ import numpy as np
 from .geometry import Location, Rect
 from .input import InputDriver
 from .matching import Matcher, MatchResult
+from .ocr import TextReader, TextResult, create_text_reader
 from .pattern import ImageLibrary, Pattern
 from .providers import ImageProvider
 from .settings import Settings
@@ -31,12 +32,14 @@ class SearchResult:
 
 class Engine:
     def __init__(self, provider: ImageProvider, matcher: Matcher, input_driver: InputDriver,
-                 library: ImageLibrary, settings: Optional[Settings] = None):
+                 library: ImageLibrary, settings: Optional[Settings] = None,
+                 text_reader: Optional[TextReader] = None):
         self.provider = provider
         self.matcher = matcher
         self.input = input_driver
         self.library = library
         self.settings = settings or Settings()
+        self.text_reader = text_reader or create_text_reader(self.settings.ocr_backend)
         self._last_image: Optional[np.ndarray] = None
 
     # ---- ekran ----------------------------------------------------------- #
@@ -75,6 +78,24 @@ class Engine:
         shifted = [MatchResult(m.rect.offset(area.x, area.y), m.score) for m in found]
         return SearchResult(shifted, best_score)
 
+    def read_text(self, area: Rect, scale: float = 1.0) -> List[TextResult]:
+        """Tek okuma: yeni kare al, area içindeki yazıları ekran koordinatlarında döndür
+        (yukarıdan aşağıya, aynı satırdakiler soldan sağa).
+
+        scale: okumadan önce büyütme. Tek haneli sayaç gibi çok küçük yazılar 1x'te hiç
+        algılanmıyor, 3x'te doğru okunuyor."""
+        image = self.grab()
+        area = area.intersect(Rect(0, 0, image.shape[1], image.shape[0])) or Rect(0, 0, 0, 0)
+        crop = image[area.y:area.bottom, area.x:area.right]
+        if crop.size == 0:
+            return []
+        if scale != 1.0:
+            crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        found = [TextResult(r.text, Rect(area.x + int(r.rect.x / scale), area.y + int(r.rect.y / scale),
+                                         int(round(r.rect.w / scale)), int(round(r.rect.h / scale))), r.score)
+                 for r in self.text_reader.read(crop)]
+        return sort_reading_order(found)
+
     def repeat_until(self, timeout: float, attempt: Callable[[], Optional[T]]) -> Optional[T]:
         """attempt() None olmayan bir değer döndürene ya da süre dolana kadar scan_rate hızında dener.
         timeout=0 ise tek deneme yapar."""
@@ -112,3 +133,20 @@ class Engine:
         self.input.tap(loc)
         if self.settings.click_delay:
             time.sleep(self.settings.click_delay)
+
+
+def reading_rows(results: List[TextResult]) -> List[List[TextResult]]:
+    """Satırlara ayırır: dikey merkezleri yarım yazı yüksekliğinden yakın olanlar aynı satırdır.
+    Satırlar yukarıdan aşağıya, satır içi parçalar soldan sağa sıralıdır."""
+    rows: List[List[TextResult]] = []
+    for r in sorted(results, key=lambda r: r.rect.center.y):
+        row = rows[-1] if rows else None
+        if row and abs(r.rect.center.y - row[0].rect.center.y) <= max(4, min(r.rect.h, row[0].rect.h) // 2):
+            row.append(r)
+        else:
+            rows.append([r])
+    return [sorted(row, key=lambda r: r.rect.x) for row in rows]
+
+
+def sort_reading_order(results: List[TextResult]) -> List[TextResult]:
+    return [r for row in reading_rows(results) for r in row]

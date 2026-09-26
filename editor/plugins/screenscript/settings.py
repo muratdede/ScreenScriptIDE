@@ -11,3 +11,4 @@ class Settings:
     click_delay: float = 0.0         # her tıklamadan sonra bekleme (sn)
     debug_dir: str = "debug"         # highlight() görüntülerinin kaydedildiği klasör
     save_on_fail: bool = False       # FindFailed olduğunda ekranı debug_dir'e kaydet
+    ocr_backend: str = "auto"        # metin okuma motoru: auto, rapid, windows

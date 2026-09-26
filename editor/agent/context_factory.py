@@ -31,7 +31,7 @@ class ContextFactory:
     def create_settings(self) -> Settings:
         c = self._project.config
         return Settings(min_similarity=c.similarity, auto_wait_timeout=c.timeout,
-                        scan_rate=c.scan_rate, save_on_fail=c.save_on_fail)
+                        scan_rate=c.scan_rate, save_on_fail=c.save_on_fail, ocr_backend=c.ocr)
 
     def create_builder(self) -> ContextBuilder:
         c, app = self._project.config, self._app

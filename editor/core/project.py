@@ -37,6 +37,7 @@ class ProjectConfig:
     grayscale: bool = False
     humanize: bool = False
     save_on_fail: bool = True
+    ocr: str = "auto"                # metin okuma motoru: auto, rapid, windows
     main_script: str = "main.py"
     script_args: Dict[str, str] = field(default_factory=dict)
     image_dirs: List[str] = field(default_factory=lambda: ["images"])

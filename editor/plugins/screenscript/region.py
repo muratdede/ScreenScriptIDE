@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import List, Optional, Union
 
 import numpy as np
 
-from .engine import Engine
-from .errors import FindFailed
+from .engine import Engine, reading_rows
+from .errors import FindFailed, TextNotFound
 from .geometry import Location, Rect
+from .ocr import TextResult
 from .pattern import Pattern
 
 log = logging.getLogger(__name__)
 
 PatternLike = Union[Pattern, str, np.ndarray]
 Target = Union[PatternLike, "Region", Location, None]
+TextQuery = Union[str, "re.Pattern[str]"]
 
 
 class Region:
@@ -114,6 +117,55 @@ class Region:
         """Tek tarama; eşik gözetmeksizin en iyi benzerlik skoru. Eşik ayarlamak için kullanışlı."""
         return self._engine.search(self._rect, Pattern.of(target)).best_score
 
+    # ---- metin (OCR) ----------------------------------------------------- #
+    def text(self, scale: float = 1.0) -> str:
+        """Bölgedeki yazı. Aynı satırdaki parçalar boşlukla, satırlar alt satırla birleşir.
+        Çok küçük yazılarda (tek rakam) scale=3 verin.
+
+            speed = Region(900, 1005, 110, 40).text()     # "66m/s"
+        """
+        return "\n".join(" ".join(r.text for r in row)
+                         for row in reading_rows(self._engine.read_text(self._rect, scale)))
+
+    def read_lines(self, scale: float = 1.0) -> List["TextMatch"]:
+        """Bölgedeki her yazı parçası konumuyla (okuma sırasında). TextMatch tıklanabilir."""
+        return [TextMatch(r, self._engine) for r in self._engine.read_text(self._rect, scale)]
+
+    def exists_text(self, query: TextQuery, timeout: Optional[float] = None) -> Optional["TextMatch"]:
+        """Yazıyı arar; bulursa TextMatch, bulamazsa None. query düz metinse büyük/küçük harf
+        ve boşluk farkı gözetmeden içerir mi diye bakar; re.compile(...) verilirse regex arar."""
+        matches = _text_matcher(query)
+        self._last_seen: List[str] = []
+
+        def attempt():
+            results = self._engine.read_text(self._rect)
+            self._last_seen = [r.text for r in results]
+            for r in results:
+                if matches(r.text):
+                    return TextMatch(r, self._engine)
+            for row in reading_rows(results):   # parçalara bölünmüş satırlar (ör. "1,644 km")
+                if len(row) > 1 and matches(" ".join(r.text for r in row)):
+                    return TextMatch(_merge(row), self._engine)
+            return None
+
+        match = self._engine.repeat_until(self._timeout(timeout), attempt)
+        log.debug("exists_text(%r) -> %s", query, match)
+        return match
+
+    def wait_text(self, query: TextQuery, timeout: Optional[float] = None) -> "TextMatch":
+        """Yazı görünene kadar bekler; süre dolarsa TextNotFound (bir FindFailed)."""
+        timeout = self._timeout(timeout)
+        match = self.exists_text(query, timeout)
+        if match is None:
+            if self._engine.settings.save_on_fail:
+                self._engine.save_debug(f"fail_text_{_query_label(query)}", [self._rect])
+            raise TextNotFound(_query_label(query), timeout, self._last_seen)
+        return match
+
+    def find_text(self, query: TextQuery) -> "TextMatch":
+        """wait_text(query, Settings.auto_wait_timeout) ile aynı."""
+        return self.wait_text(query, None)
+
     # ---- eylemler -------------------------------------------------------- #
     def click(self, target: Target = None, timeout: Optional[float] = None) -> Location:
         loc = self._resolve(target, timeout)
@@ -204,6 +256,56 @@ class Match(Region):
 
     def __repr__(self) -> str:
         return f"Match({self._pattern.name!r}, score={self._score:.3f}, {self.rect}, target={self.target})"
+
+
+class TextMatch(Region):
+    """Okunmuş bir yazı parçası. Kendisi de bir Region'dır: tıklanabilir, içinde arama yapılabilir."""
+
+    def __init__(self, result: TextResult, engine: Engine):
+        super().__init__(result.rect, engine)
+        self._text = result.text
+        self._score = result.score
+
+    def text(self, scale: float = 1.0) -> str:
+        """Okunmuş yazı (yeniden okumaz; güncel hali için Region'ı tekrar okuyun)."""
+        return self._text
+
+    @property
+    def score(self) -> float:
+        return self._score
+
+    def highlight(self, target: Union[PatternLike, Region, None] = None) -> str:
+        if target is not None:
+            return super().highlight(target)
+        return self._engine.save_debug(f"text_{self._text}", [self.rect], [self._score])
+
+    def __str__(self) -> str:
+        return self._text
+
+    def __repr__(self) -> str:
+        return f"TextMatch({self._text!r}, score={self._score:.2f}, {self.rect})"
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def _text_matcher(query: TextQuery):
+    if isinstance(query, re.Pattern):
+        return lambda text: query.search(text) is not None
+    needle = _normalize(query)
+    return lambda text: needle in _normalize(text)
+
+
+def _query_label(query: TextQuery) -> str:
+    return f"/{query.pattern}/" if isinstance(query, re.Pattern) else repr(query)
+
+
+def _merge(results: List[TextResult]) -> TextResult:
+    x1, y1 = min(r.rect.x for r in results), min(r.rect.y for r in results)
+    x2, y2 = max(r.rect.right for r in results), max(r.rect.bottom for r in results)
+    return TextResult(" ".join(r.text for r in results), Rect(x1, y1, x2 - x1, y2 - y1),
+                      min(r.score for r in results))
 
 
 class Screen(Region):
