@@ -1,5 +1,6 @@
 PySide6>=6.5
 jedi>=0.19
+pyflakes>=3.0        # kod denetimi (Sorunlar paneli)
 opencv-python
 numpy
 

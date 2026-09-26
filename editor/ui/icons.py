@@ -89,6 +89,8 @@ _ICONS = {
     "recents": '<rect x="2.5" y="4.5" width="8" height="9" rx="1"/><path d="M5.5 2.5h7a1 1 0 0 1 1 1v8"/>',
     "eval": '<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M5 6.5h2.5M6.25 5.25v2.5M9 6.5h2.5'
             'M5 10h2.5M9 9.3h2.5M9 10.7h2.5"/>',
+    "error": '<circle cx="8" cy="8" r="6"/><path d="M5.9 5.9l4.2 4.2M10.1 5.9l-4.2 4.2"/>',
+    "warning": '<path d="M8 2.2l6.2 11H1.8z"/><path d="M8 6.4v3.2"/><circle cx="8" cy="11.4" r=".5" fill="{c}"/>',
 }
 
 _SVG = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="{c}" '

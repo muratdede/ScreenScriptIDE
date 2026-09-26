@@ -1,14 +1,18 @@
-"""Python sözdizimi renklendirici (script API isimleri ayrı renkte)."""
+"""Python sözdizimi renklendirici (script API isimleri ayrı renkte).
+
+Kelime kurallarının üstüne, kod denetiminin ürettiği anlamsal belirteçler (kullanıcının sınıfları,
+fonksiyonları, parametreleri, modülleri) set_semantic() ile uygulanır."""
 
 from __future__ import annotations
 
 import builtins
 import keyword
 import re
-from typing import Iterable, List, Tuple
+from typing import Callable, Dict, Iterable, List, Tuple
 
 from PySide6.QtGui import QColor, QFont, QSyntaxHighlighter, QTextCharFormat
 
+from ..core.semantic import CLASS, FUNCTION, MODULE, PARAMETER
 from .theme import THEME
 
 
@@ -19,6 +23,17 @@ def _fmt(color: QColor, bold: bool = False, italic: bool = False) -> QTextCharFo
         f.setFontWeight(QFont.Bold)
     f.setFontItalic(italic)
     return f
+
+
+def utf16_mapper(text: str) -> Callable[[int], int]:
+    """Python str indeksini QTextDocument (UTF-16) konumuna çevirir. Emoji gibi BMP dışı karakter
+    yoksa ikisi aynıdır."""
+    if all(ord(ch) < 0x10000 for ch in text):
+        return lambda i: i
+    prefix = [0]
+    for ch in text:
+        prefix.append(prefix[-1] + (2 if ord(ch) >= 0x10000 else 1))
+    return lambda i: prefix[min(max(i, 0), len(text))]
 
 
 class PythonHighlighter(QSyntaxHighlighter):
@@ -48,6 +63,19 @@ class PythonHighlighter(QSyntaxHighlighter):
             r"""(?P<tri>[rbfuRBFU]{0,2}(?:\'\'\'|\"\"\"))"""
             r"""|(?P<str>[rbfuRBFU]{0,2}(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))"""
             r"""|(?P<com>\#.*)""")
+        self._semantic: Dict[int, List[Tuple[int, int, str, str]]] = {}   # satır (1'den) -> belirteçler
+        self._semantic_fmt = {CLASS: _fmt(THEME.class_ref), FUNCTION: _fmt(THEME.function_call),
+                              PARAMETER: _fmt(THEME.parameter), MODULE: _fmt(THEME.module)}
+
+    def set_semantic(self, tokens: Dict[int, List[Tuple[int, int, str, str]]]) -> None:
+        """Yeni anlamsal belirteçler: yalnızca değişen satırlar yeniden boyanır."""
+        old, self._semantic = self._semantic, tokens
+        doc = self.document()
+        for line in set(old) | set(tokens):
+            if old.get(line) != tokens.get(line):
+                block = doc.findBlockByNumber(line - 1)
+                if block.isValid():
+                    self.rehighlightBlock(block)
 
     def _add(self, pattern: str, fmt: QTextCharFormat, group: int = 0) -> None:
         self._rules.append((re.compile(pattern), fmt, group))
@@ -56,6 +84,12 @@ class PythonHighlighter(QSyntaxHighlighter):
         for regex, fmt, group in self._rules:
             for m in regex.finditer(text):
                 self.setFormat(m.start(group), m.end(group) - m.start(group), fmt)
+        tokens = self._semantic.get(self.currentBlock().blockNumber() + 1)
+        if tokens:
+            to16 = utf16_mapper(text)
+            for start, end, name, kind in tokens:
+                if text[start:end] == name:   # satırlar kaymışsa (yazarken) bir sonraki denetime kadar atla
+                    self.setFormat(to16(start), to16(end) - to16(start), self._semantic_fmt[kind])
 
         pos = self._continue_multiline(text)
         if pos < 0:

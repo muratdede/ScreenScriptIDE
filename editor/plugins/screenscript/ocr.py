@@ -1,0 +1,232 @@
+"""Metin okuma (OCR). Görüntüdeki yazıları kutularıyla birlikte döndürür.
+
+TextReader       : arayüz — read(image) -> List[TextResult] (kutu, verilen görüntüye göre)
+RapidOcrReader   : PaddleOCR modelleri, onnxruntime ile (pip install rapidocr onnxruntime).
+                   Oyun fontlarında ve sayılarda en isabetlisi; varsayılan.
+WindowsOcrReader : Windows'un yerleşik OCR'ı (pip install winrt-Windows.Media.Ocr ...).
+                   Model indirmez, çok hızlı; küçük yazı ve sayılarda daha zayıf.
+ScaledReader     : Decorator — görüntüyü büyütüp/ön işleyip iç okuyucuya verir, kutuları geri ölçekler.
+create_text_reader("auto" | "rapid" | "windows") uygun okuyucuyu kurar.
+
+Okuyucular ilk read() çağrısında yüklenir; kurulum anı ucuzdur.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib.util
+import os
+import threading
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import List, Optional
+
+import cv2
+import numpy as np
+
+from .errors import ScriptError
+from .geometry import Rect
+
+
+class OcrUnavailable(ScriptError):
+    """Kullanılabilir bir OCR motoru yok (paket kurulu değil ya da başlatılamadı)."""
+
+
+@dataclass(frozen=True)
+class TextResult:
+    text: str
+    rect: Rect      # okunan görüntüye göre koordinat
+    score: float    # 0..1 güven
+
+
+class TextReader(ABC):
+    name: str = "ocr"
+
+    @abstractmethod
+    def read(self, image: np.ndarray) -> List[TextResult]:
+        """BGR görüntüdeki satırlar (motorun verdiği sırayla)."""
+
+
+# --------------------------------------------------------------------------- #
+# RapidOCR
+# --------------------------------------------------------------------------- #
+class RapidOcrReader(TextReader):
+    name = "rapid"
+
+    # Varsayılan RapidOCR ayarı küçük görüntüleri kısa kenarı 736 px olacak şekilde büyütüyor;
+    # ekran bölgelerinde bu, çağrı başına saniyeler demek. Uzun kenarı sınırlamak 20-50 ms'ye
+    # indiriyor, doğruluk değişmiyor. Yazılar hep yatay olduğundan yön sınıflandırıcı kapalı.
+    DEFAULT_PARAMS = {
+        "Global.use_cls": False,
+        "Global.log_level": "error",
+        "Det.limit_type": "max",
+        "Det.limit_side_len": 960,
+        "EngineConfig.onnxruntime.intra_op_num_threads": min(8, os.cpu_count() or 4),
+    }
+
+    def __init__(self, params: Optional[dict] = None, min_score: float = 0.5):
+        self._params = {**self.DEFAULT_PARAMS, **(params or {})}
+        self._min_score = min_score
+        self._engine = None
+        self._lock = threading.Lock()
+
+    def _load(self):
+        if self._engine is None:
+            try:
+                import onnxruntime  # noqa: F401 — winrt'den önce yüklenmeli (aksi halde süreç çöküyor)
+                from rapidocr import RapidOCR
+            except ImportError as e:
+                raise OcrUnavailable("RapidOCR kurulu değil: pip install rapidocr onnxruntime") from e
+            self._engine = RapidOCR(params=self._params)
+        return self._engine
+
+    def read(self, image: np.ndarray) -> List[TextResult]:
+        if image.size == 0:
+            return []
+        with self._lock:   # onnx oturumu thread-safe değil; ayrıca çağrı başına parametre verilmemeli
+            out = self._load()(image)          # (durumu kalıcı değiştiriyor)
+        if out.boxes is None or out.txts is None:
+            return []
+        results = []
+        for box, text, score in zip(out.boxes, out.txts, out.scores):
+            if score < self._min_score or not text.strip():
+                continue
+            xs, ys = box[:, 0], box[:, 1]
+            x, y = int(xs.min()), int(ys.min())
+            results.append(TextResult(text.strip(), Rect(x, y, int(xs.max()) - x, int(ys.max()) - y),
+                                      float(score)))
+        return results
+
+
+# --------------------------------------------------------------------------- #
+# Windows.Media.Ocr
+# --------------------------------------------------------------------------- #
+class WindowsOcrReader(TextReader):
+    """language: "en-US" gibi bir etiket; None ise kullanıcı profilinin dilleri (yüklü OCR
+    dil paketlerinden biri) kullanılır. Latin alfabeli diller İngilizce metni de okur."""
+
+    name = "windows"
+
+    def __init__(self, language: Optional[str] = None):
+        self._language = language
+        self._engine = None
+        self._lock = threading.Lock()
+
+    def _load(self):
+        if self._engine is None:
+            try:
+                from winrt.windows.globalization import Language
+                from winrt.windows.media.ocr import OcrEngine
+            except ImportError as e:
+                raise OcrUnavailable(
+                    "Windows OCR kurulu değil: pip install winrt-Windows.Media.Ocr "
+                    "winrt-Windows.Graphics.Imaging winrt-Windows.Storage.Streams "
+                    "winrt-Windows.Globalization winrt-Windows.Foundation "
+                    "winrt-Windows.Foundation.Collections") from e
+            engine = (OcrEngine.try_create_from_language(Language(self._language)) if self._language
+                      else OcrEngine.try_create_from_user_profile_languages())
+            if engine is None:
+                langs = [l.language_tag for l in OcrEngine.available_recognizer_languages]
+                raise OcrUnavailable("Windows OCR dili yüklü değil: %s (yüklü: %s)" % (self._language, langs))
+            self._engine = engine
+        return self._engine
+
+    def read(self, image: np.ndarray) -> List[TextResult]:
+        if image.size == 0:
+            return []
+        from winrt.windows.graphics.imaging import BitmapPixelFormat, SoftwareBitmap
+        from winrt.windows.storage.streams import DataWriter
+
+        with self._lock:
+            engine = self._load()
+            bgra = cv2.cvtColor(image, cv2.COLOR_BGR2BGRA)
+            writer = DataWriter()
+            writer.write_bytes(bgra.tobytes())
+            bitmap = SoftwareBitmap.create_copy_from_buffer(
+                writer.detach_buffer(), BitmapPixelFormat.BGRA8, bgra.shape[1], bgra.shape[0])
+
+            async def recognize():
+                return await engine.recognize_async(bitmap)
+
+            result = asyncio.run(recognize())
+
+        lines = []
+        for line in result.lines:
+            boxes = [w.bounding_rect for w in line.words]
+            if not boxes or not line.text.strip():
+                continue
+            x1, y1 = min(b.x for b in boxes), min(b.y for b in boxes)
+            x2, y2 = max(b.x + b.width for b in boxes), max(b.y + b.height for b in boxes)
+            lines.append(TextResult(line.text.strip(), Rect(int(x1), int(y1), int(x2 - x1), int(y2 - y1)), 1.0))
+        return lines
+
+
+# --------------------------------------------------------------------------- #
+# Ön işleme
+# --------------------------------------------------------------------------- #
+class ScaledReader(TextReader):
+    """Decorator: görüntüyü `scale` kat büyütür (küçük yazılar için), istenirse gri/ters
+    çevirir (koyu zemin üstünde açık yazı), iç okuyucunun kutularını orijinal ölçeğe döndürür."""
+
+    def __init__(self, inner: TextReader, scale: float = 2.0, grayscale: bool = False, invert: bool = False):
+        self._inner = inner
+        self._scale = scale
+        self._grayscale = grayscale
+        self._invert = invert
+        self.name = inner.name
+
+    def read(self, image: np.ndarray) -> List[TextResult]:
+        if image.size == 0:
+            return []
+        img = image
+        if self._scale != 1.0:
+            img = cv2.resize(img, None, fx=self._scale, fy=self._scale, interpolation=cv2.INTER_CUBIC)
+        if self._grayscale or self._invert:
+            img = cv2.cvtColor(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.COLOR_GRAY2BGR)
+        if self._invert:
+            img = 255 - img
+        s = self._scale
+        return [TextResult(r.text, Rect(int(r.rect.x / s), int(r.rect.y / s),
+                                        int(round(r.rect.w / s)), int(round(r.rect.h / s))), r.score)
+                for r in self._inner.read(img)]
+
+
+class UnavailableReader(TextReader):
+    """Hiçbir motor yokken kullanılır; ilk kullanımda neyin kurulacağını söyler."""
+
+    name = "none"
+
+    def read(self, image: np.ndarray) -> List[TextResult]:
+        raise OcrUnavailable("OCR motoru yok. Önerilen: pip install rapidocr onnxruntime")
+
+
+# --------------------------------------------------------------------------- #
+def _installed(module: str) -> bool:
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def available_backends() -> List[str]:
+    found = []
+    if _installed("rapidocr") and _installed("onnxruntime"):
+        found.append("rapid")
+    if _installed("winrt.windows.media.ocr"):
+        found.append("windows")
+    return found
+
+
+def create_text_reader(backend: str = "auto") -> TextReader:
+    """backend: "auto" (kurulu olanlardan en isabetlisi), "rapid" ya da "windows".
+    Paket kontrolü import etmeden yapılır; motor ilk okumada yüklenir."""
+    if backend == "auto":
+        found = available_backends()
+        backend = found[0] if found else "none"
+    if backend == "rapid":
+        return RapidOcrReader()
+    if backend == "windows":
+        return ScaledReader(WindowsOcrReader(), scale=2.0)
+    if backend == "none":
+        return UnavailableReader()
+    raise ValueError("Bilinmeyen OCR motoru: %r (auto, rapid, windows)" % backend)

@@ -7,22 +7,20 @@ import os
 import threading
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
-                               QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                               QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel,
+                               QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QWidget)
 
 from ..core import app_settings
 from ..core.app_settings import AppConfig
 from ..core.project import Project, ProjectConfig
+from .settings_dialog import GroupedSettingsDialog, hint
 
 
-class ProjectSettingsDialog(QDialog):
+class ProjectSettingsDialog(GroupedSettingsDialog):
     OCR_BACKENDS = [("auto", "Otomatik"), ("rapid", "RapidOCR (isabetli)"), ("windows", "Windows OCR (hızlı)")]
 
     def __init__(self, project: Project, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"Proje Ayarları — {project.name}")
-        self.setMinimumWidth(520)
+        super().__init__(f"Proje Ayarları — {project.name}", parent)
         self._project = project
         c = project.config
 
@@ -51,37 +49,35 @@ class ProjectSettingsDialog(QDialog):
         self.image_dirs = QLineEdit(", ".join(c.image_dirs))
         self.args = QPlainTextEdit("\n".join(f"{k}={v}" for k, v in c.script_args.items()))
         self.args.setPlaceholderText("anahtar=değer (her satıra bir tane) — script'te ARGS['anahtar']")
-        self.args.setMaximumHeight(90)
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(self._group("Eşleştirme", [
-            ("Varsayılan eşik", self.similarity), ("Bekleme süresi (sn)", self.timeout),
-            ("Tarama hızı (/sn)", self.scan_rate), ("Ölçekler (her zaman açık)", self.scales), ("", self.grayscale),
-            ("Metin okuma (OCR)", self.ocr)]))
-        layout.addWidget(self._group("Çalıştırma", [
-            ("Ana script", main_row), ("Görsel klasörleri", self.image_dirs),
-            ("", self.humanize), ("Dokunuş süresi", self.tap_ms), ("", self.save_on_fail),
-            ("Script argümanları", self.args)]))
-        note = QLabel("Cihaz bağlantısı ve Telegram bildirim ayarları uygulama ayarlarındadır "
-                      "(Ayarlar, Ctrl+Alt+S).")
-        note.setObjectName("hint")
-        layout.addWidget(note)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        self.args.setMinimumHeight(120)
 
-    @staticmethod
-    def _group(title, rows):
-        box = QGroupBox(title)
-        form = QFormLayout(box)
-        for label, widget in rows:
-            form.addRow(label, widget)
-        return box
+        self.add_page(("Genel",), [
+            ("Script", [("Ana script", main_row)]),
+            ("Görseller", [("Görsel klasörleri", self.image_dirs),
+                           ("", hint("Proje köküne göre, virgülle ayrılmış klasörler."))]),
+            ("", [("", hint("Cihaz bağlantısı ve Telegram bildirim ayarları uygulama ayarlarındadır "
+                            "(Ayarlar, Ctrl+Alt+S)."))])])
+        self.add_page(("Eşleştirme", "Görsel Arama"), [
+            ("Eşik ve süre", [("Varsayılan eşik", self.similarity), ("Bekleme süresi (sn)", self.timeout),
+                              ("Tarama hızı (/sn)", self.scan_rate)]),
+            ("Ölçek ve renk", [("Ölçekler (her zaman açık)", self.scales), ("", self.grayscale)])])
+        self.add_page(("Eşleştirme", "Metin Okuma (OCR)"), [
+            ("OCR", [("Motor", self.ocr),
+                     ("", hint("read_text / find_text için kullanılır. Otomatik: kurulu olanlardan "
+                               "RapidOCR, yoksa Windows OCR."))])])
+        self.add_page(("Çalıştırma", "Girdi"), [
+            ("Dokunuş", [("", self.humanize), ("Dokunuş süresi", self.tap_ms)])])
+        self.add_page(("Çalıştırma", "Script Argümanları"), [
+            ("ARGS", [("Argümanlar", self.args)])])
+        self.add_page(("Çalıştırma", "Hata Ayıklama"), [
+            ("Başarısız arama", [("", self.save_on_fail)])])
+        self.finish()
 
     @staticmethod
     def _with_button(edit, text, slot) -> QWidget:
         w = QWidget()
+        w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         row = QHBoxLayout(w)
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(edit, 1)
@@ -117,15 +113,13 @@ class ProjectSettingsDialog(QDialog):
         c.script_args = args
 
 
-class AppSettingsDialog(QDialog):
+class AppSettingsDialog(GroupedSettingsDialog):
     """Uygulama ayarları: %LOCALAPPDATA%\\ScreenScript\\settings.json. Tüm projelerde geçerlidir."""
 
     _test_done = Signal(bool, str)
 
     def __init__(self, config: AppConfig, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Ayarlar")
-        self.setMinimumWidth(560)
+        super().__init__("Ayarlar", parent)
         self._config = config
         c = config
 
@@ -166,32 +160,26 @@ class AppSettingsDialog(QDialog):
         open_btn = QPushButton("Klasörü aç")
         open_btn.clicked.connect(lambda: app_settings.open_in_file_manager(folder))
         folder_row = QWidget()
+        folder_row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         fr = QHBoxLayout(folder_row)
         fr.setContentsMargins(0, 0, 0, 0)
         fr.addWidget(path_label, 1)
         fr.addWidget(open_btn)
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(ProjectSettingsDialog._group("Cihaz bağlantısı", [
-            ("Host", self.host), ("Port", self.port), ("adb yolu", adb_row), ("Yakalama formatı", self.fmt),
-            ("", self.background)]))
-        layout.addWidget(ProjectSettingsDialog._group("Bildirim (Telegram) — push_notification()", [
-            ("Bot token", self.tg_token), ("Kullanıcı adı", self.tg_user), ("", self.tg_commands), ("", test_row)]))
-        layout.addWidget(ProjectSettingsDialog._group("Ayar klasörü", [
-            ("", folder_row),
-            ("", self._hint("IDE durumu (ide.ini), uygulama ayarları (settings.json), Telegram önbelleği "
-                            "ve oturum dosyaları (*.session) burada tutulur; proje klasörlerine yazılmaz."))]))
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    @staticmethod
-    def _hint(text: str) -> QLabel:
-        label = QLabel(text)
-        label.setObjectName("hint")
-        label.setWordWrap(True)
-        return label
+        self.add_page(("Cihaz", "Bağlantı"), [
+            ("ADB", [("Host", self.host), ("Port", self.port), ("adb yolu", adb_row)])])
+        self.add_page(("Cihaz", "Ekran Yakalama"), [
+            ("Yakalama", [("Format", self.fmt), ("", self.background)])])
+        self.add_page(("Bildirimler", "Telegram"), [
+            ("Bot", [("Bot token", self.tg_token), ("Kullanıcı adı", self.tg_user), ("", self.tg_commands)]),
+            ("Deneme", [("", test_row)]),
+            ("", [("", hint("Script'lerde push_notification() bu ayarlarla gönderilir."))])])
+        self.add_page(("Sistem", "Ayar Klasörü"), [
+            ("Konum", [("", folder_row),
+                       ("", hint("IDE durumu (ide.ini), uygulama ayarları (settings.json), Telegram önbelleği "
+                                 "ve oturum dosyaları (*.session) burada tutulur; proje klasörlerine "
+                                 "yazılmaz."))])])
+        self.finish()
 
     def _browse_adb(self):
         path, _ = QFileDialog.getOpenFileName(self, "adb seç", r"C:\Program Files\BlueStacks_nxt"

@@ -149,6 +149,17 @@ class Project:
     def image_search_dirs(self) -> List[str]:
         return [self.resolve(d) for d in self.config.image_dirs]
 
+    def find_image(self, name: str, script_dir: str = "") -> Optional[str]:
+        """Koddaki görsel adını dosyaya çevirir (proje kökü, script klasörü, görsel klasörleri)."""
+        candidates = [os.path.join(self._root, name)]
+        if script_dir:
+            candidates += [os.path.join(script_dir, name), os.path.join(script_dir, "images", name)]
+        candidates += [os.path.join(d, name) for d in self.image_search_dirs()]
+        for c in candidates:
+            if os.path.isfile(c):
+                return os.path.abspath(c)
+        return None
+
     # ---- dosya işlemleri ------------------------------------------------- #
     def create_script(self, name: str, directory: Optional[str] = None) -> str:
         if not name.endswith(".py"):

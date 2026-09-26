@@ -21,6 +21,8 @@ from ..core.session import SessionState
 from . import icons
 from .dialogs import ProjectSettingsDialog
 from .editor_tabs import EditorTabs
+from .problems_badge import ProblemsBadge
+from .theme import THEME
 from .views import DEFAULT_VIEWS, DockView
 
 _PROJECT_COLORS = ["#7b61d6", "#3d8f58", "#c75450", "#3574f0", "#c7812d", "#2a9d99"]
@@ -70,6 +72,8 @@ class MainWindow(QMainWindow):
         self.tabs = EditorTabs(ctx)
         ctx.documents = self.tabs
         self.setCentralWidget(self.tabs)
+        self._problems_badge = ProblemsBadge(ctx, self.tabs)   # kod alanının sağ üstü: hata/uyarı özeti
+        self._problems_badge.clicked.connect(self._show_problems)
         self.run_controller = RunController(ctx, self)
 
         self._actions: Dict[str, QAction] = {}
@@ -183,7 +187,7 @@ class MainWindow(QMainWindow):
         A("save_all", "Tümünü Kaydet", self.tabs.save_all, "Ctrl+Shift+S")
         A("close_tab", "Sekmeyi Kapat", lambda: self.tabs.close_tab(self.tabs.currentIndex()), "Ctrl+W")
         A("quit", "Çıkış", self.close, "Ctrl+Q")
-        A("settings", "Proje Ayarları…", self.edit_settings, "Ctrl+Alt+Shift+S")
+        A("settings", "Proje Ayarları…", self.edit_settings, "Ctrl+Alt+Shift+S", icon="settings")
         A("app_settings", "Ayarlar…", self.edit_app_settings, "Ctrl+Alt+S", icon="settings")
         A("grab", "Ekranı Canlı Yakala / Durdur", self.ctx.toggle_live_screen, "Ctrl+Shift+G", icon="camera")
         A("grab_once", "Tek Kare Yakala", self.ctx.grab_screen, icon="refresh")
@@ -200,6 +204,8 @@ class MainWindow(QMainWindow):
         A("replace", "Değiştir…", lambda: self._editor_call("show_find", True), "Ctrl+R")
         A("find_next", "Sonrakini Bul", lambda: self._editor_call("find_next"), "F3")
         A("find_prev", "Öncekini Bul", lambda: self._editor_call("find_previous"), "Shift+F3")
+        A("next_problem", "Sonraki Sorun", lambda: self._editor_call("go_to_problem", True), "F8")
+        A("prev_problem", "Önceki Sorun", lambda: self._editor_call("go_to_problem", False), "Shift+F8")
         A("find_files", "Dosyalarda Bul…", lambda: self.find_in_files(False), "Ctrl+Shift+F", icon="search")
         A("replace_files", "Dosyalarda Değiştir…", lambda: self.find_in_files(True), "Ctrl+Shift+R")
 
@@ -243,7 +249,7 @@ class MainWindow(QMainWindow):
         m.addActions([a["complete"], a["signature"], a["comment"]])
 
         m = root.addMenu("Git")
-        m.addActions([a["goto_def"], a["goto"]])
+        m.addActions([a["goto_def"], a["goto"], a["next_problem"], a["prev_problem"]])
 
         m = root.addMenu("Çalıştır")
         m.addActions([a["run"], a["debug"], a["stop"], a["pause"]])
@@ -319,6 +325,8 @@ class MainWindow(QMainWindow):
         mmenu.addActions([a["stop_on_entry"], a["toggle_bp"], a["mute_bps"]])
         mmenu.addSeparator()
         mmenu.addActions([a["grab"], a["grab_once"]])
+        mmenu.addSeparator()
+        mmenu.addAction(a["settings"])
         more.setMenu(mmenu)
         more.setPopupMode(QToolButton.InstantPopup)
         tb.addWidget(more)
@@ -368,10 +376,30 @@ class MainWindow(QMainWindow):
         self._device_label.setToolTip("ADB hedefi (Ayarlar, Ctrl+Alt+S)")
         self._pos_label = QLabel()
         self._enc_label = QLabel("UTF-8   4 boşluk")
+        self._problems_label = QLabel()
+        self._problems_label.setToolTip("Sorunlar (Alt+6) — tıklayın")
+        self._problems_label.setCursor(Qt.PointingHandCursor)
+        self._problems_label.mousePressEvent = lambda _e: self._show_problems()
         sb.addWidget(self._crumb_label, 1)
-        for w in (self._state_label, self._device_label, self._pos_label, self._enc_label):
+        for w in (self._problems_label, self._state_label, self._device_label, self._pos_label, self._enc_label):
             sb.addPermanentWidget(w)
         self.tabs.cursor_moved.connect(self._on_cursor)
+        self.ctx.diagnostics.changed.connect(self._update_problems_label)
+        self.ctx.diagnostics.reset.connect(self._update_problems_label)
+        self._update_problems_label()
+
+    def _update_problems_label(self, *_):
+        errors, warnings = self.ctx.diagnostics.totals()
+        parts = []
+        if errors:
+            parts.append(f"<span style='color:{THEME.error.name()}'>●</span> {errors}")
+        if warnings:
+            parts.append(f"<span style='color:{THEME.warning.name()}'>▲</span> {warnings}")
+        self._problems_label.setText("&nbsp;&nbsp;".join(parts))
+
+    def _show_problems(self):
+        if "problems" in self.views:
+            self.views["problems"].reveal()
 
     def _on_cursor(self, line: int, col: int) -> None:
         self._pos_label.setText(f"{line}:{col}" if line else "")
@@ -528,16 +556,18 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Proje yok", "Önce bir proje klasörü açın.")
             return
         dialog = ProjectSettingsDialog(self.ctx.project, self)
-        if dialog.exec():
-            dialog.apply()
-            self.ctx.save_project_config()
+        dialog.applied.connect(self.ctx.save_project_config)   # Tamam ve Uygula
+        dialog.exec()
 
     def edit_app_settings(self) -> None:
         from .dialogs import AppSettingsDialog
         dialog = AppSettingsDialog(self.ctx.app_config, self)
-        if dialog.exec():
+
+        def save():
             self.ctx.save_app_config(dialog.result_config())
             self.statusBar().showMessage("Ayarlar kaydedildi", 3000)
+        dialog.applied.connect(save)   # Tamam ve Uygula
+        dialog.exec()
 
     def goto_line(self) -> None:
         editor = self.tabs.current_editor()

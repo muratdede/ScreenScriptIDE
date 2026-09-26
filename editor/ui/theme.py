@@ -26,6 +26,8 @@ class Theme:
     current_line = QColor("#26282e")
     debug_line = QColor("#2d3f63")
     breakpoint = QColor("#db5c5c")
+    error = QColor("#f75464")           # kod denetimi: hata
+    warning = QColor("#e0a84a")         # kod denetimi: uyarı
     debug_arrow = QColor("#f2c55c")
     selection = QColor("#214283")
     find_match = QColor("#32593d")
@@ -45,6 +47,11 @@ class Theme:
     definition = QColor("#56a8f5")
     decorator = QColor("#b3ae60")
     self_ = QColor("#94558d")
+    # anlamsal renklendirme (kullanıcının tanımladığı isimler)
+    class_ref = QColor("#4ec9b0")        # sınıf kullanımı
+    function_call = QColor("#57aaf7")    # fonksiyon / metot çağrısı
+    parameter = QColor("#d6a3c9")        # parametre ve isimli argüman
+    module = QColor("#b0c4de")           # importlanan modül
 
     # konsol
     console_err = QColor("#f07178")

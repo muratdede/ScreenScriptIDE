@@ -9,6 +9,7 @@ from PySide6.QtCore import QObject, QSettings
 from .app_settings import AppConfig, create_ide_settings, move_session_files
 from .breakpoints import BreakpointStore
 from .device_input import DeviceInput
+from .diagnostics import DiagnosticsStore
 from .completion import FallbackCompletionProvider, create_default_provider
 from .events import EventBus
 from .grabber import ScreenGrabber
@@ -51,6 +52,7 @@ class EditorContext(QObject):
         self.grabber = ScreenGrabber(self)
         self.device_input = DeviceInput(self)   # Ekran view'ındaki tıklayıcı modu
         self.images = ImageRepository(self)
+        self.diagnostics = DiagnosticsStore(self, self)   # kod denetimi (hata/uyarı listesi)
         self.telegram = TelegramCommandService(self.grabber, self)   # bota gelen /capture komutları
         self.completion: FallbackCompletionProvider = create_default_provider(None, [install_root])
         self.project: Optional[Project] = None
@@ -78,6 +80,7 @@ class EditorContext(QObject):
         self._remember_recent(project.root)
         self.bus.project_opened.emit(project)
         self.images.set_project(project)
+        self.diagnostics.set_project(project)
         return project
 
     def save_project_config(self) -> None:

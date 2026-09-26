@@ -8,16 +8,18 @@ import keyword
 import os
 import re
 from functools import lru_cache
-from typing import Callable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from PySide6.QtCore import QModelIndex, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import (QColor, QCursor, QGuiApplication, QIcon, QPainter, QPen, QPixmap, QStandardItem,
-                           QStandardItemModel, QTextCursor, QTextDocument, QTextFormat)
+                           QStandardItemModel, QTextCharFormat, QTextCursor, QTextDocument, QTextFormat)
 from PySide6.QtWidgets import QCompleter, QLabel, QPlainTextEdit, QTextEdit, QToolTip, QWidget
 
 from ..core.completion import CodePosition, api_names
 from ..core.context import EditorContext
-from .highlighter import PythonHighlighter
+from ..core.diagnostics import Diagnostic
+from .highlighter import PythonHighlighter, utf16_mapper
+from .problem_popup import Fix, ProblemPopup
 from .theme import THEME
 
 INDENT = "    "
@@ -36,15 +38,6 @@ def file_stamp(path: str) -> Optional[Tuple[int, int]]:
     return st.st_mtime_ns, st.st_size
 
 
-def _utf16_mapper(text: str) -> Callable[[int], int]:
-    """Python str indeksini QTextDocument (UTF-16) konumuna çevirir. Emoji gibi BMP dışı karakter
-    yoksa ikisi aynıdır."""
-    if all(ord(ch) < 0x10000 for ch in text):
-        return lambda i: i
-    prefix = [0]
-    for ch in text:
-        prefix.append(prefix[-1] + (2 if ord(ch) >= 0x10000 else 1))
-    return lambda i: prefix[min(max(i, 0), len(text))]
 _KIND_COLORS = {"function": "#56a8f5", "class": "#e5c07b", "keyword": "#cf8e6d", "module": "#c678dd",
                 "instance": "#56b6c2", "statement": "#98c379", "param": "#d19a66", "property": "#b3ae60"}
 
@@ -198,6 +191,16 @@ class CodeEditor(QPlainTextEdit):
         self._find_timer.timeout.connect(lambda: self.find_update(select=False))
         self.document().contentsChanged.connect(self._on_contents_for_find)
 
+        # kod denetimi: yazmayı bırakınca kısa süre sonra hata/uyarılar yenilenir
+        self._diagnostics: List[Diagnostic] = []
+        self._diag_timer = QTimer(self, singleShot=True, interval=400)
+        self._diag_timer.timeout.connect(self.run_diagnostics)
+        self.document().contentsChanged.connect(self.schedule_diagnostics)
+        self._problem_popup = ProblemPopup(self)   # sorunun üzerine gelince / Alt+Enter
+        self.destroyed.connect(self._problem_popup.deleteLater)
+        self.verticalScrollBar().valueChanged.connect(lambda _v: self._problem_popup.hide())
+        self.horizontalScrollBar().valueChanged.connect(lambda _v: self._problem_popup.hide())
+
         # çoklu imleç: orta tuşla / Alt ile sürükleyerek sütun seçimi, Alt+Shift+tık ile imleç ekleme
         self._column_anchor: Optional[QPoint] = None
         self.setCursorWidth(2)
@@ -314,6 +317,10 @@ class CodeEditor(QPlainTextEdit):
         breakpoints = self._ctx.breakpoints.lines(self._path)
         muted = self._ctx.breakpoints.muted
         current = self.current_line()
+        problem_lines = {}
+        for d in self._diagnostics:   # satır başına en ağır önem
+            if problem_lines.get(d.line) != "error":
+                problem_lines[d.line] = d.severity
         block = self.firstVisibleBlock()
         top = round(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
         line_h = self.fontMetrics().height()
@@ -337,7 +344,11 @@ class CodeEditor(QPlainTextEdit):
                     painter.setPen(Qt.NoPen)
                     y = top + line_h // 2
                     painter.drawPolygon([QPointF(4, y - 5), QPointF(14, y), QPointF(4, y + 5)])
-                painter.setPen(THEME.line_number_current if number == current else THEME.line_number)
+                severity = problem_lines.get(number)
+                if severity:
+                    painter.setPen(THEME.error if severity == "error" else THEME.warning)
+                else:
+                    painter.setPen(THEME.line_number_current if number == current else THEME.line_number)
                 painter.drawText(0, top, width - 8, line_h, Qt.AlignRight | Qt.AlignVCenter, str(number))
             block = block.next()
             top += height
@@ -384,6 +395,15 @@ class CodeEditor(QPlainTextEdit):
                 sel.format.setBackground(THEME.selection)
                 sel.cursor = QTextCursor(c)
                 selections.append(sel)
+        for d in self._diagnostics:
+            cursor = self._diagnostic_cursor(d)
+            if cursor is None:
+                continue
+            sel = QTextEdit.ExtraSelection()
+            sel.format.setUnderlineStyle(QTextCharFormat.WaveUnderline)
+            sel.format.setUnderlineColor(THEME.error if d.is_error else THEME.warning)
+            sel.cursor = cursor
+            selections.append(sel)
         if self._link:
             link = QTextEdit.ExtraSelection()
             link.format.setForeground(QColor("#548af7"))
@@ -392,6 +412,177 @@ class CodeEditor(QPlainTextEdit):
             selections.append(link)
         self.setExtraSelections(selections)
         self._gutter.update()
+
+    # ---- kod denetimi ---------------------------------------------------- #
+    @property
+    def diagnostics(self) -> List[Diagnostic]:
+        return list(self._diagnostics)
+
+    def schedule_diagnostics(self) -> None:
+        if self._path.endswith(".py"):
+            self._diag_timer.start()
+
+    def run_diagnostics(self) -> None:
+        if not self._path.endswith(".py"):   # yeniden adlandırılıp .py olmaktan çıkmış olabilir
+            if self._diagnostics:
+                self._diagnostics = []
+                self._update_extra_selections()
+            return
+        store = self._ctx.diagnostics
+        self._diagnostics, tokens = store.analyze(self._path, self.toPlainText())
+        store.publish(self._path, self._diagnostics)
+        if tokens is not None and self._highlighter is not None:   # sözdizimi hatasında eski renkler kalır
+            self._highlighter.set_semantic(tokens)
+            self._diag_timer.stop()   # yeniden boyama contentsChanged yayar; metin değişmedi, tekrar denetleme
+        self._update_extra_selections()
+
+    def _diagnostic_cursor(self, d: Diagnostic) -> Optional[QTextCursor]:
+        block = self.document().findBlockByNumber(d.line - 1)
+        if not block.isValid():
+            return None
+        text = block.text()
+        to_doc = utf16_mapper(text)
+        start, end = min(d.column, len(text)), min(d.end_column, len(text))
+        if end <= start:   # aralık yok (ör. satır sonunda sözdizimi hatası): satırın dolu kısmını işaretle
+            start, end = len(text) - len(text.lstrip()), len(text.rstrip())
+            if end <= start:
+                if not text:
+                    return None   # boş satır: altı çizilecek karakter yok (oluktaki numara yine renkli)
+                start, end = len(text) - 1, len(text)
+        return self._range_cursor(block.position() + to_doc(start), block.position() + to_doc(end))
+
+    def diagnostics_at(self, line: int, column: int) -> List[Diagnostic]:
+        out = []
+        for d in self._diagnostics:
+            if d.line != line:
+                continue
+            end = d.end_column if d.end_column > d.column else 10 ** 6
+            if d.column <= column <= end:
+                out.append(d)
+        return out
+
+    def go_to_problem(self, forward: bool = True) -> bool:
+        """İmleçten sonraki (önceki) soruna git. F8 / Shift+F8."""
+        if not self._diagnostics:
+            return False
+        c = self.textCursor()
+        here = (c.blockNumber() + 1, c.positionInBlock())
+        items = sorted(self._diagnostics, key=lambda d: (d.line, d.column))
+        if forward:
+            target = next((d for d in items if (d.line, d.column) > here), items[0])
+        else:
+            target = next((d for d in reversed(items) if (d.line, d.column) < here), items[-1])
+        self.select_match_at(target.line, target.column, 0)
+        self.show_problems_at_cursor()
+        return True
+
+    # ---- sorun penceresi ve hızlı düzeltmeler ---------------------------- #
+    def _problems_near_cursor(self) -> List[Diagnostic]:
+        c = self.textCursor()
+        line, col = c.blockNumber() + 1, c.positionInBlock()
+        return self.diagnostics_at(line, col) or [d for d in self._diagnostics if d.line == line]
+
+    def show_problems_at_cursor(self) -> bool:
+        """Alt+Enter / F8: imleçteki sorunları pencerede göster (tuşa basılana kadar açık kalır)."""
+        problems = self._problems_near_cursor()
+        if not problems:
+            return False
+        rect = self.cursorRect()
+        anchor = QRect(self.viewport().mapToGlobal(rect.topLeft()), rect.size())
+        self._problem_popup.show_for(problems, self.quick_fixes(problems), anchor)
+        return True
+
+    def apply_first_fix(self) -> bool:
+        """Alt+Shift+Enter: imleçteki sorunun ilk hızlı düzeltmesi."""
+        fixes = self.quick_fixes(self._problems_near_cursor())
+        if not fixes:
+            return False
+        self._problem_popup.hide()
+        fixes[0][1]()
+        return True
+
+    def quick_fixes(self, problems: List[Diagnostic]) -> List[Fix]:
+        fixes: List[Fix] = []
+        for d in problems:
+            if d.suggestion:
+                fixes.append((f"'{d.suggestion}' olarak değiştir", lambda d=d: self._replace_diagnostic(d)))
+            if d.code == "UnusedImport":
+                fixes.append(("Kullanılmayan importu kaldır", lambda d=d: self._remove_import(d)))
+        if problems:
+            line = problems[0].line
+            fixes.append(("Bu satırda gizle (# noqa)", lambda: self._add_noqa(line)))
+            fixes.append(("Sorunlar panelinde göster", self._reveal_problems_view))
+        return fixes
+
+    def _reveal_problems_view(self) -> None:
+        view = getattr(self.window(), "views", {}).get("problems")
+        if view is not None:
+            view.reveal()
+
+    def _replace_diagnostic(self, d: Diagnostic) -> None:
+        cursor = self._diagnostic_cursor(d)
+        if cursor is None or not cursor.hasSelection():
+            return
+        cursor.insertText(d.suggestion)
+        self.setTextCursor(cursor)
+
+    def _remove_import(self, d: Diagnostic) -> None:
+        """İmport listesinden ismi (varsa 'as' ile) çıkarır; tek isimse satırı siler."""
+        block = self.document().findBlockByNumber(d.line - 1)
+        if not block.isValid():
+            return
+        text = block.text()
+        code = text.split("#", 1)[0]
+        kw = re.search(r"\bimport\b", code)
+        start = kw.end() if kw else 0
+        segments = [(start + m.start(), start + m.end()) for m in re.finditer(r"[^,()]+", code[start:])
+                    if m.group().strip()]
+        target = next(((a, b) for a, b in segments if a <= d.column <= b), None)
+        if target is None:
+            return
+        to_doc = utf16_mapper(text)
+        cursor = QTextCursor(self.document())
+        cursor.beginEditBlock()
+        if len(segments) == 1 and kw and "(" not in code:   # tek isimli import: satırı sil
+            cursor.setPosition(block.position())
+            if block.next().isValid():
+                cursor.setPosition(block.next().position(), QTextCursor.KeepAnchor)
+            else:
+                cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        else:
+            a, b = target
+            a += len(text[a:b]) - len(text[a:b].lstrip())
+            b -= len(text[a:b]) - len(text[a:b].rstrip())
+            after = re.match(r"\s*,\s*", text[b:])
+            before = re.search(r",\s*$", text[:a])
+            if after:                       # "x, " -> sonraki virgülü de al
+                b += after.end()
+            elif before:                    # son eleman: önceki virgülü al
+                a = before.start()
+            cursor.setPosition(block.position() + to_doc(a))
+            cursor.setPosition(block.position() + to_doc(b), QTextCursor.KeepAnchor)
+        cursor.removeSelectedText()
+        cursor.endEditBlock()
+
+    def _add_noqa(self, line: int) -> None:
+        block = self.document().findBlockByNumber(line - 1)
+        if not block.isValid():
+            return
+        text = block.text()
+        cursor = QTextCursor(self.document())
+        cursor.setPosition(block.position() + utf16_mapper(text)(len(text.rstrip())))
+        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)   # sondaki boşluklar
+        cursor.insertText("  # noqa")
+
+    def _hover_keep_alive(self, line: int):
+        """Fare hâlâ bu satırdaki bir sorunun üzerinde mi (pencere açık kalsın mı)?"""
+        def alive(global_pos: QPoint) -> bool:
+            local = self.viewport().mapFromGlobal(global_pos)
+            if not self.viewport().rect().contains(local):
+                return False
+            c = self.cursorForPosition(local)
+            return c.blockNumber() + 1 == line and bool(self.diagnostics_at(line, c.positionInBlock()))
+        return alive
 
     def _range_cursor(self, start: int, end: int) -> QTextCursor:
         c = QTextCursor(self.document())
@@ -453,7 +644,7 @@ class CodeEditor(QPlainTextEdit):
         self._find_ranges = []
         if pattern is not None:
             text = self.toPlainText()
-            to_doc = _utf16_mapper(text)
+            to_doc = utf16_mapper(text)
             for m in pattern.finditer(text):
                 if m.end() > m.start():
                     self._find_ranges.append((to_doc(m.start()), to_doc(m.end())))
@@ -564,7 +755,7 @@ class CodeEditor(QPlainTextEdit):
         block = self.document().findBlockByNumber(max(0, line - 1))
         if not block.isValid():
             return
-        to_doc = _utf16_mapper(block.text())
+        to_doc = utf16_mapper(block.text())
         start = block.position() + to_doc(column)
         end = block.position() + to_doc(min(len(block.text()), column + length))
         self.setTextCursor(self._range_cursor(start, end))
@@ -578,7 +769,7 @@ class CodeEditor(QPlainTextEdit):
             return None
         block = cursor.block()
         text, col = block.text(), cursor.positionInBlock()
-        to_doc = _utf16_mapper(text)
+        to_doc = utf16_mapper(text)
         for m in _IMAGE_LITERAL.finditer(text):   # "images/x.png" -> görseli aç
             if m.start() <= col <= m.end():
                 return block.position() + to_doc(m.start()), block.position() + to_doc(m.end())
@@ -845,6 +1036,18 @@ class CodeEditor(QPlainTextEdit):
     def keyPressEvent(self, event):
         popup = self._completer.popup()
         key, mods = event.key(), event.modifiers()
+        if key in (Qt.Key_Return, Qt.Key_Enter) and mods & Qt.AltModifier:
+            if mods & Qt.ShiftModifier:
+                self.apply_first_fix()          # Alt+Shift+Enter: ilk hızlı düzeltme
+            elif self._problem_popup.isVisible() and self._problem_popup.fixes:
+                self._problem_popup.show_menu_at(self.viewport().mapToGlobal(self.cursorRect().bottomLeft()))
+            else:
+                self.show_problems_at_cursor()  # Alt+Enter: sorun penceresi
+            return
+        if self._problem_popup.isVisible() and key not in (Qt.Key_Alt, Qt.Key_Shift, Qt.Key_Control):
+            self._problem_popup.hide()
+            if key == Qt.Key_Escape:
+                return
         if self._carets and self._multi_key(event):
             return
 
@@ -1000,10 +1203,12 @@ class CodeEditor(QPlainTextEdit):
         # tamamlama listesi açılırken odak kısa süre popup'a geçer; o durumda kutuyu kapatma
         if event.reason() != Qt.PopupFocusReason:
             self.hide_signature()
+            self._problem_popup.hide()
         super().focusOutEvent(event)
 
     def hideEvent(self, event):
         self.hide_signature()
+        self._problem_popup.hide()
         super().hideEvent(event)
 
     # ---- sürükle-bırak: görsel dosyası -> "göreli/yol.png" ---------------- #
@@ -1129,6 +1334,15 @@ class CodeEditor(QPlainTextEdit):
         cursor = self.cursorForPosition(pos)
         text = cursor.block().text()
         col = cursor.positionInBlock()
+        problems = [d for d in self.diagnostics_at(cursor.blockNumber() + 1, col) if d.code != "MissingImage"]
+        if problems:
+            QToolTip.hideText()
+            line_rect = self.cursorRect(cursor)
+            anchor = QRect(self.viewport().mapToGlobal(QPoint(pos.x(), line_rect.top())),
+                           QSize(1, line_rect.height()))
+            self._problem_popup.show_for(problems, self.quick_fixes(problems), anchor,
+                                         keep_alive=self._hover_keep_alive(problems[0].line))
+            return
         # string içindeki görsel adı -> küçük önizleme
         for m in re.finditer(r"""["']([^"']+\.(?:png|jpg|jpeg|bmp))["']""", text, re.IGNORECASE):
             if m.start() <= col <= m.end():
@@ -1153,12 +1367,10 @@ class CodeEditor(QPlainTextEdit):
 
     def _resolve_image(self, name: str) -> Optional[str]:
         project = self._ctx.project
-        candidates = ([os.path.join(project.root, name)] if project else []) + [
-                      os.path.join(os.path.dirname(self._path), name),
-                      os.path.join(os.path.dirname(self._path), "images", name)]
+        script_dir = os.path.dirname(self._path)
         if project:
-            candidates += [os.path.join(d, name) for d in project.image_search_dirs()]
-        for c in candidates:
+            return project.find_image(name, script_dir)
+        for c in (os.path.join(script_dir, name), os.path.join(script_dir, "images", name)):
             if os.path.isfile(c):
                 return os.path.abspath(c)
         return None

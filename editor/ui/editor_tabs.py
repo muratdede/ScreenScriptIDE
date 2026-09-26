@@ -115,6 +115,9 @@ class EditorTabs(QTabWidget, DocumentService):
                 doc.document().modificationChanged.connect(lambda _m, ed=doc: self._update_title(ed))
                 doc.cursorPositionChanged.connect(lambda ed=doc: self._emit_cursor(ed))
                 self._apply_debug_line(doc)
+                if doc.path.endswith(".py"):
+                    self._ctx.diagnostics.attach_live(doc.path)
+                    doc.run_diagnostics()
         self.setCurrentWidget(doc)
         if line and isinstance(doc, CodeEditor):
             doc.go_to_line(line)
@@ -167,6 +170,8 @@ class EditorTabs(QTabWidget, DocumentService):
             if answer == QMessageBox.Save and not self._save(doc):
                 return False
         self.removeTab(index)
+        if isinstance(doc, CodeEditor) and doc.path.endswith(".py"):
+            self._ctx.diagnostics.detach_live(doc.path)
         doc.deleteLater()
         if not self.count():
             self._ctx.bus.active_file_changed.emit("")
@@ -189,7 +194,12 @@ class EditorTabs(QTabWidget, DocumentService):
                 target = os.path.join(new, os.path.abspath(doc.path)[len(os.path.abspath(old)) + 1:])
             else:
                 continue
+            if isinstance(doc, CodeEditor) and doc.path.endswith(".py"):
+                self._ctx.diagnostics.detach_live(doc.path)
             doc.set_path(target)
+            if isinstance(doc, CodeEditor) and target.endswith(".py"):
+                self._ctx.diagnostics.attach_live(target)
+                doc.run_diagnostics()
             i = self.indexOf(doc)
             dirty = isinstance(doc, CodeEditor) and doc.is_dirty
             self.setTabText(i, os.path.basename(target) + (" ●" if dirty else ""))
@@ -281,7 +291,7 @@ class EditorTabs(QTabWidget, DocumentService):
         p.fillRect(self.rect(), THEME.background)
         hints = [("Projeyi aç", "Ctrl+Shift+O"), ("Yeni script", "Ctrl+N"), ("Dosyalarda bul", "Ctrl+Shift+F"),
                  ("Çalıştır", "Shift+F10"), ("Debug", "F5"), ("Ekranı canlı yakala", "Ctrl+Shift+G"),
-                 ("Paneller", "Alt+1 … Alt+5")]
+                 ("Paneller", "Alt+1 … Alt+6")]
         line_h = 28
         top = self.height() // 2 - len(hints) * line_h // 2
         mid = self.width() // 2
