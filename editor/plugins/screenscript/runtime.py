@@ -109,6 +109,7 @@ class ContextBuilder:
     screencap_format: ScreencapFormat = ScreencapFormat.STREAM
     background: bool = False
     background_interval: float = 0.3
+    tap_ms: int = 0              # >0: dokunuşlar bu kadar ms basılı tutulur (doğal dokunuş)
     settings: Settings = field(default_factory=Settings)
     image_dirs: list = field(default_factory=list)
 
@@ -166,7 +167,7 @@ class ContextBuilder:
         if self._input is not None:
             driver = self._input
         else:
-            driver = AdbInputDriver(get_device())
+            driver = AdbInputDriver(get_device(), press_ms=self.tap_ms)
         for wrap in self._input_decorators:
             driver = wrap(driver)
 

@@ -44,6 +44,9 @@ class ProjectSettingsDialog(QDialog):
         self.main_script = QLineEdit(c.main_script)
         main_row = self._with_button(self.main_script, "Seç…", self._browse_main)
         self.humanize = QCheckBox("Tıklamalara küçük sapma/gecikme ekle", checked=c.humanize)
+        self.tap_ms = QSpinBox(minimum=0, maximum=1000, singleStep=10, value=int(c.tap_ms), suffix=" ms")
+        self.tap_ms.setToolTip("0: anlık dokunuş (input tap). >0: parmak bu kadar basılı kalıp kalkar;\n"
+                               "oyun kısa dokunuşları kaçırıyorsa 60-120 ms deneyin.")
         self.save_on_fail = QCheckBox("Bulunamayınca ekranı debug/ klasörüne kaydet", checked=c.save_on_fail)
         self.image_dirs = QLineEdit(", ".join(c.image_dirs))
         self.args = QPlainTextEdit("\n".join(f"{k}={v}" for k, v in c.script_args.items()))
@@ -57,7 +60,8 @@ class ProjectSettingsDialog(QDialog):
             ("Metin okuma (OCR)", self.ocr)]))
         layout.addWidget(self._group("Çalıştırma", [
             ("Ana script", main_row), ("Görsel klasörleri", self.image_dirs),
-            ("", self.humanize), ("", self.save_on_fail), ("Script argümanları", self.args)]))
+            ("", self.humanize), ("Dokunuş süresi", self.tap_ms), ("", self.save_on_fail),
+            ("Script argümanları", self.args)]))
         note = QLabel("Cihaz bağlantısı ve Telegram bildirim ayarları uygulama ayarlarındadır "
                       "(Ayarlar, Ctrl+Alt+S).")
         note.setObjectName("hint")
@@ -101,6 +105,7 @@ class ProjectSettingsDialog(QDialog):
         c.ocr = self.ocr.currentData()
         c.main_script = self.main_script.text().strip()
         c.humanize = self.humanize.isChecked()
+        c.tap_ms = self.tap_ms.value()
         c.save_on_fail = self.save_on_fail.isChecked()
         c.image_dirs = [d.strip() for d in self.image_dirs.text().split(",") if d.strip()] or ["images"]
         args = {}

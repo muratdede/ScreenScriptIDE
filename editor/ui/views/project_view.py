@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import QDir, QFile, QModelIndex, Qt, QUrl
+from PySide6.QtCore import QDir, QFile, QModelIndex, Qt, QTimer, QUrl
 from typing import List
 
 from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
@@ -47,19 +47,16 @@ class ProjectView(DockView):
     shortcut = "Alt+1"
 
     HIDDEN = ["__pycache__", "*.pyc", ".git", ".idea", ".vscode", "debug"]
+    FILTER = QDir.AllEntries | QDir.NoDotAndDotDot | QDir.AllDirs
+    VERIFY_INTERVAL_MS = 500
 
     def build(self):
         self._stack = QStackedWidget()
         self._empty = QLabel("Proje açık değil.\nProje Aç (Ctrl+Shift+O)", alignment=Qt.AlignCenter)
         self._empty.setObjectName("hint")
         self._empty.setWordWrap(True)
-        self._model = ProjectFileModel(self)
-        self._model.setFilter(QDir.AllEntries | QDir.NoDotAndDotDot | QDir.AllDirs)
-        self._model.setNameFilters([])
         self._tree = QTreeView()
-        self._tree.setModel(self._model)
-        for col in (1, 2, 3):
-            self._tree.hideColumn(col)
+        self._model = self._new_model()
         self._tree.setHeaderHidden(True)
         self._tree.setIndentation(14)
         self._tree.setSelectionMode(QAbstractItemView.ExtendedSelection)   # Ctrl/Shift ile çoklu seçim
@@ -78,7 +75,26 @@ class ProjectView(DockView):
         bus = self.ctx.bus
         bus.project_opened.connect(self._on_project)
         bus.project_config_changed.connect(self._on_project_config)
+
+        # QFileSystemModel'in kendi izleyicisi bazı değişiklikleri kaçırabiliyor (ağ sürücüsü, toplu
+        # kopyalama, izleyici limiti…). Açık klasörler periyodik olarak diskle karşılaştırılır;
+        # fark iki turdur sürüyorsa model yeniden kurulur (açık klasörler ve seçim korunur).
+        self._stale_ticks = 0
+        self._pending_expand: List[str] = []
+        self._pending_current = ""
+        self._verify_timer = QTimer(self, interval=self.VERIFY_INTERVAL_MS)
+        self._verify_timer.timeout.connect(self._verify_tree)
         return self._stack
+
+    def _new_model(self) -> ProjectFileModel:
+        model = ProjectFileModel(self)
+        model.setFilter(self.FILTER)
+        model.setNameFilters([])
+        self._tree.setModel(model)
+        for col in (1, 2, 3):
+            self._tree.hideColumn(col)
+        model.directoryLoaded.connect(self._restore_state)
+        return model
 
     def _on_project(self, project):
         root = self._model.setRootPath(project.root)
@@ -86,10 +102,73 @@ class ProjectView(DockView):
         self._on_project_config(project)
         self._stack.setCurrentWidget(self._tree)
         self.setWindowTitle("Proje")
+        self._stale_ticks = 0
+        self._verify_timer.start()
 
     def _on_project_config(self, project):
         self._model.main_script = project.main_script_path or ""
         self._tree.viewport().update()
+
+    # ---- diskle eşitleme -------------------------------------------------- #
+    def _expanded_dirs(self) -> List[QModelIndex]:
+        """Kök ve ağaçta açık olan klasörler."""
+        root = self._tree.rootIndex()
+        result, stack = [], [root]
+        while stack:
+            parent = stack.pop()
+            result.append(parent)
+            for row in range(self._model.rowCount(parent)):
+                child = self._model.index(row, 0, parent)
+                if self._tree.isExpanded(child):
+                    stack.append(child)
+        return result
+
+    def _verify_tree(self):
+        if self.ctx.project is None or not self._tree.rootIndex().isValid():
+            return
+        stale = False
+        for index in self._expanded_dirs():
+            if self._model.canFetchMore(index):
+                continue   # henüz yüklenmedi
+            path = self._model.filePath(index)
+            if not os.path.isdir(path):
+                stale = True
+                break
+            on_disk = set(QDir(path).entryList(self.FILTER))
+            shown = {self._model.fileName(self._model.index(r, 0, index)) for r in range(self._model.rowCount(index))}
+            if on_disk != shown:
+                stale = True
+                break
+        self._stale_ticks = self._stale_ticks + 1 if stale else 0
+        if self._stale_ticks >= 2:   # ilk turda modelin kendi izleyicisine fırsat ver
+            self._stale_ticks = 0
+            self._rebuild_model()
+
+    def _rebuild_model(self):
+        expanded = [self._model.filePath(i) for i in self._expanded_dirs()[1:]]
+        current = self._current_path()
+        old = self._model
+        self._model = self._new_model()
+        old.deleteLater()
+        self._pending_expand = expanded
+        self._pending_current = current
+        self._on_project(self.ctx.project)
+
+    def _restore_state(self, _path: str):
+        """Model yeniden kurulduktan sonra klasörler yüklendikçe açık klasörleri ve seçimi geri getir."""
+        remaining = []
+        for path in self._pending_expand:
+            index = self._model.index(path)
+            if index.isValid():
+                self._tree.expand(index)
+            elif os.path.isdir(path):
+                remaining.append(path)
+        self._pending_expand = remaining
+        if self._pending_current:
+            index = self._model.index(self._pending_current)
+            if index.isValid():
+                self._tree.setCurrentIndex(index)
+                self._pending_current = ""
 
     # ---- seçim ----------------------------------------------------------- #
     def selected_paths(self) -> List[str]:

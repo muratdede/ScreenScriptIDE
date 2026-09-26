@@ -38,6 +38,7 @@ class ContextFactory:
         return ContextBuilder(host=app.host, port=int(app.port), adb_path=app.adb_path or None,
                               screencap_format=ScreencapFormat(app.screencap_format),
                               background=app.background,
+                              tap_ms=int(c.tap_ms),
                               settings=self.create_settings(),
                               image_dirs=self._project.image_search_dirs())
 

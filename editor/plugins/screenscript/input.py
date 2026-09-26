@@ -44,13 +44,21 @@ class InputDriver(ABC):
 
 
 class AdbInputDriver(InputDriver):
-    """`adb shell input ...` ile dokunma gönderir."""
+    """`adb shell input ...` ile dokunma gönderir.
 
-    def __init__(self, device: AdbDevice):
+    press_ms > 0 ise dokunma, parmağın o kadar süre basılı kalıp kalktığı bir basış olarak
+    gönderilir (`input swipe x y x y ms`). `input tap` basma ve kaldırmayı aynı anda yollar;
+    bazı oyunlar (özellikle yük altında) bu kadar kısa dokunuşları kaçırabiliyor."""
+
+    def __init__(self, device: AdbDevice, press_ms: int = 0):
         self._device = device
+        self._press_ms = int(press_ms)
 
     def tap(self, loc):
-        self._device.shell(f"input tap {loc.x} {loc.y}")
+        if self._press_ms > 0:
+            self._device.shell(f"input swipe {loc.x} {loc.y} {loc.x} {loc.y} {self._press_ms}")
+        else:
+            self._device.shell(f"input tap {loc.x} {loc.y}")
 
     def swipe(self, start, end, duration_ms=300):
         self._device.shell(f"input swipe {start.x} {start.y} {end.x} {end.y} {int(duration_ms)}")

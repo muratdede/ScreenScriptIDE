@@ -174,7 +174,7 @@ class AdbStreamSource(FrameSource):
 
     TIME_LIMIT = 180          # Android <= 10 üst sınırı
     ROTATE_AFTER = 165        # bu kadar saniye sonra yeni oturum paralel başlatılır
-    FIRST_FRAME_TIMEOUT = 8.0
+    FIRST_FRAME_TIMEOUT = 1.5     # akış ısınana kadar uzun bekleme; screencap zaten ~0.3 sn'de doğru kare verir
     RESTART_BACKOFF = (1.0, 2.0, 5.0, 10.0)
 
     def __init__(self, device: AdbDevice, bit_rate: int = 8_000_000, size: Optional[Tuple[int, int]] = None,
@@ -237,7 +237,7 @@ class AdbStreamSource(FrameSource):
             frame = self._frame
         if frame is not None:
             return frame
-        log.info("Akıştan kare gelmedi; screencap kullanılıyor")
+        log.debug("Akıştan henüz kare gelmedi; screencap kullanılıyor")
         return self._fallback.grab()
 
     # ---- canlı görüntü için ------------------------------------------------ #

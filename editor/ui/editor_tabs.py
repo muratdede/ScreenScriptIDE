@@ -6,13 +6,13 @@ from __future__ import annotations
 import os
 from typing import List, Optional, Tuple, Union
 
-from PySide6.QtCore import QEvent, QRect, Qt, Signal
+from PySide6.QtCore import QEvent, QFileSystemWatcher, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter
-from PySide6.QtWidgets import QMessageBox, QTabBar, QTabWidget, QToolButton
+from PySide6.QtWidgets import QApplication, QMessageBox, QTabBar, QTabWidget, QToolButton
 
 from ..core.context import DocumentService, EditorContext
 from . import icons
-from .code_editor import IMAGE_EXTENSIONS, CodeEditor
+from .code_editor import IMAGE_EXTENSIONS, CodeEditor, file_stamp
 from .image_viewer import ImageViewer
 from .theme import THEME
 
@@ -27,6 +27,7 @@ class EditorTabs(QTabWidget, DocumentService):
     cursor_moved = Signal(int, int)   # satır, sütun
 
     TEXT_EXTENSIONS = (".py", ".txt", ".md", ".json", ".cfg", ".ini", ".yaml", ".yml", ".csv", ".log")
+    POLL_INTERVAL_MS = 500
 
     def __init__(self, ctx: EditorContext, parent=None):
         super().__init__(parent)
@@ -40,6 +41,20 @@ class EditorTabs(QTabWidget, DocumentService):
         self.tabBar().setExpanding(False)
         self.tabBar().installEventFilter(self)   # orta tık = kapat
         self.currentChanged.connect(self._on_current_changed)
+
+        # dışarıda değişen açık dosyalar: watcher anlık haber verir, yoklama kaçırdıklarını yakalar
+        self._asking = False
+        self._watcher = QFileSystemWatcher(self)
+        self._watcher.fileChanged.connect(lambda _p: self._sync_timer.start())
+        self._sync_timer = QTimer(self, singleShot=True, interval=100)   # atomik yazmaları bekle
+        self._sync_timer.timeout.connect(self.check_external_changes)
+        self._poll = QTimer(self, interval=self.POLL_INTERVAL_MS)
+        self._poll.timeout.connect(self.check_external_changes)
+        self._poll.start()
+        app = QApplication.instance()
+        if app is not None:
+            app.applicationStateChanged.connect(
+                lambda s: self._sync_timer.start() if s == Qt.ApplicationActive else None)
 
         bus = ctx.bus
         bus.open_file_requested.connect(self.open_path)
@@ -181,6 +196,54 @@ class EditorTabs(QTabWidget, DocumentService):
             self.setTabToolTip(i, target)
             self.setTabIcon(i, icons.file_icon(target))
         self._on_current_changed(self.currentIndex())
+
+    # ---- dış değişiklikler ----------------------------------------------- #
+    def check_external_changes(self) -> None:
+        """Açık dosyalar diskte değiştiyse yeniden yükle. Kaydedilmemiş değişikliği olan editör için sorar."""
+        self._rewatch()
+        if self._asking:
+            return
+        for doc in self.documents():
+            if isinstance(doc, ImageViewer):
+                doc.reload_if_changed()
+                continue
+            stamp = file_stamp(doc.path)
+            if stamp is None or stamp == doc.disk_stamp:
+                continue   # silinmiş (belki atomik kaydın ortasında) ya da değişmemiş
+            if not doc.is_dirty:
+                self._reload(doc)
+            elif QApplication.applicationState() == Qt.ApplicationActive:
+                self._ask_reload(doc)
+
+    def _reload(self, editor: CodeEditor) -> None:
+        try:
+            editor.reload_from_disk()
+        except OSError:
+            pass
+
+    def _ask_reload(self, editor: CodeEditor) -> None:
+        self._asking = True
+        try:
+            self.setCurrentWidget(editor)
+            answer = QMessageBox.question(
+                self, "Dosya dışarıda değişti",
+                f"{os.path.basename(editor.path)} diskte değişti, editörde kaydedilmemiş değişiklikler var.\n\n"
+                "Diskteki sürüm yüklensin mi? (Hayır: editördeki hali korunur)",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer == QMessageBox.Yes:
+                self._reload(editor)
+            else:
+                editor.disk_stamp = file_stamp(editor.path)   # bu değişiklik için bir daha sorma
+        finally:
+            self._asking = False
+
+    def _rewatch(self) -> None:
+        wanted = {d.path for d in self.documents() if os.path.isfile(d.path)}
+        current = set(self._watcher.files())
+        if current - wanted:
+            self._watcher.removePaths(list(current - wanted))
+        if wanted - current:
+            self._watcher.addPaths(list(wanted - current))
 
     def _save(self, editor: CodeEditor) -> bool:
         try:

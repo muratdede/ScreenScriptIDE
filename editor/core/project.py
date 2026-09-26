@@ -36,6 +36,7 @@ class ProjectConfig:
     scales: List[float] = field(default_factory=lambda: [0.8, 0.9, 1.0, 1.1, 1.2])
     grayscale: bool = False
     humanize: bool = False
+    tap_ms: int = 0                  # dokunuş basılı kalma süresi (ms); 0 = anlık "input tap"
     save_on_fail: bool = True
     ocr: str = "auto"                # metin okuma motoru: auto, rapid, windows
     main_script: str = "main.py"

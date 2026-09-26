@@ -27,6 +27,15 @@ _IDENT = re.compile(r"[^\W\d]\w*")
 _IMAGE_LITERAL = re.compile(r"""(["'])([^"'\n]+\.(?:png|jpg|jpeg|bmp))\1""", re.IGNORECASE)
 
 
+def file_stamp(path: str) -> Optional[Tuple[int, int]]:
+    """Diskteki dosyanın (mtime_ns, boyut) damgası; dosya yoksa None."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return st.st_mtime_ns, st.st_size
+
+
 def _utf16_mapper(text: str) -> Callable[[int], int]:
     """Python str indeksini QTextDocument (UTF-16) konumuna çevirir. Emoji gibi BMP dışı karakter
     yoksa ikisi aynıdır."""
@@ -141,6 +150,7 @@ class CodeEditor(QPlainTextEdit):
         super().__init__(parent)
         self._path = os.path.abspath(path)
         self._ctx = ctx
+        self.disk_stamp: Optional[Tuple[int, int]] = None   # son okunan/yazılan halin damgası
         self._debug_line = 0
         self._find_bar = None   # bul/değiştir çubuğu (ilk Ctrl+F'de oluşturulur)
         self._carets: List[QTextCursor] = []   # çoklu imleç modu (boş = normal)
@@ -212,6 +222,7 @@ class CodeEditor(QPlainTextEdit):
         with open(self._path, encoding="utf-8", errors="replace") as f:
             self.setPlainText(f.read())
         self.document().setModified(False)
+        self.disk_stamp = file_stamp(self._path)
 
     def save(self) -> None:
         text = self.toPlainText()
@@ -220,6 +231,31 @@ class CodeEditor(QPlainTextEdit):
         with open(self._path, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         self.document().setModified(False)
+        self.disk_stamp = file_stamp(self._path)
+
+    def reload_from_disk(self) -> None:
+        """Dosya dışarıda değişti: içeriği yeniden oku; imleç, kaydırma ve geri alma geçmişi korunur."""
+        with open(self._path, encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        self.disk_stamp = file_stamp(self._path)
+        if text == self.toPlainText():
+            self.document().setModified(False)
+            return
+        cursor = self.textCursor()
+        line, col = cursor.blockNumber(), cursor.positionInBlock()
+        vbar, hbar = self.verticalScrollBar().value(), self.horizontalScrollBar().value()
+        c = QTextCursor(self.document())
+        c.beginEditBlock()
+        c.select(QTextCursor.Document)
+        c.insertText(text)
+        c.endEditBlock()
+        self.document().setModified(False)
+        block = self.document().findBlockByNumber(min(line, self.blockCount() - 1))
+        c = QTextCursor(block)
+        c.movePosition(QTextCursor.Right, n=min(col, block.length() - 1))
+        self.setTextCursor(c)
+        self.verticalScrollBar().setValue(vbar)
+        self.horizontalScrollBar().setValue(hbar)
 
     # ---- konum ----------------------------------------------------------- #
     def current_line(self) -> int:
