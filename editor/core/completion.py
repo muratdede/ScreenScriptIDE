@@ -76,7 +76,7 @@ def script_namespace() -> Dict[str, object]:
     """Script'in çalışırken göreceği globallerin aynısı. Gerçek ScriptContext.namespace()
     kullanılır; cihaz yerine boş bir görüntü sağlayıcı verilir. Böylece API'ye eklenen her
     yeni isim editörde de otomatik görünür."""
-    from screenscript import (Engine, ImageLibrary, ImagePath, ImageProvider, InputDriver,
+    from ..plugins.screenscript import (Engine, ImageLibrary, ImagePath, ImageProvider, InputDriver,
                               ScriptContext, Settings, TemplateMatcher)
 
     class _BlankProvider(ImageProvider):

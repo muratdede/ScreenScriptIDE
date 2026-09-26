@@ -1,14 +1,14 @@
 # ScreenScript IDE
 
-SikuliX tarzı editör. Ana koda (`adb_capture`, `screenscript`) dokunmaz; sadece public API'lerini kullanır.
+SikuliX tarzı editör. Uygulamanın kendisi editördür; arka uç işler (ADB yakalama, görsel script API'si)
+`editor/plugins/` altında eklenti olarak bulunur. Tek giriş noktası kökteki `main.py`'dir.
 
 ## Kurulum ve çalıştırma
 
 ```
-cd adb_capture
-pip install -r editor/requirements.txt
-python -m editor                                  # son projeyi açar
-python -m editor editor/examples/ornek_proje      # belirli bir klasörü proje olarak açar
+pip install -r requirements.txt
+python main.py                           # son projeyi açar
+python main.py examples/ornek_proje      # belirli bir klasörü proje olarak açar
 ```
 
 Proje = herhangi bir klasör. İlk açılışta `images/`, `.screenscript.json` ve `main.py` oluşturulur.
@@ -49,14 +49,26 @@ Eşik, ölçekler, ana script gibi ayarlar: **Proje Ayarları (Ctrl+Alt+Shift+S)
 ## Mimari
 
 ```
+main.py            Tek giriş noktası (editor.app.main)
+requirements.txt
+examples/          Örnek proje(ler)
 editor/
-  core/      Qt'siz: project.py, protocol.py | Qt servisleri: events (EventBus), breakpoints,
-             completion (CompletionProvider), session (ScriptSession), grabber, context, run_controller
-  agent/     Script süreci: context_factory (ProjectConfig -> ScriptContext), debugger (bdb tabanlı)
-  ui/        main_window, editor_tabs, code_editor, highlighter, dialogs, theme, views/
+  app.py           EditorApplication (QApplication + EditorContext + MainWindow)
+  core/            Qt'siz: project.py, protocol.py | Qt servisleri: events (EventBus), breakpoints,
+                   completion (CompletionProvider), session (ScriptSession), grabber, context, run_controller
+  agent/           Script süreci: runner (süreç girişi), context_factory (ProjectConfig -> ScriptContext),
+                   debugger (bdb tabanlı)
+  ui/              main_window, editor_tabs, code_editor, highlighter, dialogs, theme, views/
+  plugins/         Arka uç eklentileri (Qt'siz, editöre bağımlı değil)
+    adb_capture/   ADB erişimi + kare yakalama (screencap / h264 akışı)
+    screenscript/  SikuliX tarzı görsel otomasyon API'si
 ```
 
-Script, editörden ayrı bir Python sürecinde çalışır (`python -m editor.agent`); böylece takılan bir
+Editör eklentileri paket olarak içerir (`from ..plugins.screenscript import ...`); eklentiler arası
+importlar göreli yapılır (`from ..adb_capture import ...`). Yeni bir arka uç işi `editor/plugins/` altına
+ayrı bir paket olarak eklenir; kendi giriş noktası (main) olmaz.
+
+Script, editörden ayrı bir Python sürecinde çalışır (`editor.agent.runner`, ScriptSession başlatır); böylece takılan bir
 script editörü dondurmaz ve Durdur her zaman çalışır. Debug komutları satır bazlı JSON ile TCP
 üzerinden gider. Debugger sadece proje dosyalarını izler; kütüphane kodu normal hızda çalışır.
 

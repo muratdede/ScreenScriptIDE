@@ -16,7 +16,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
-from adb_capture import AdbDevice, FrameSource, ScreencapFormat, create_source
+from ..adb_capture import AdbDevice, FrameSource, ScreencapFormat, create_source
 
 from .engine import Engine
 from .errors import FindFailed, ImageNotFound, NotificationError, ScriptError
@@ -189,10 +189,12 @@ class ScriptRunner:
 
         log.info("Script başlıyor: %s", script_path)
         started = time.monotonic()
-        old_argv = sys.argv
+        old_argv, old_path = sys.argv, list(sys.path)
         try:
             with self._ctx:
                 sys.argv = [script_path]
+                # Script yanındaki modül/paketler import edilebilsin (python script.py gibi)
+                sys.path.insert(0, script_dir)
                 runpy.run_path(script_path, init_globals=self._ctx.namespace(args), run_name="__main__")
             log.info("Script bitti (%.1f sn)", time.monotonic() - started)
             return 0
@@ -212,6 +214,7 @@ class ScriptRunner:
             return 1
         finally:
             sys.argv = old_argv
+            sys.path[:] = old_path
 
 
 __all__ = ["ScriptContext", "ContextBuilder", "ScriptRunner",

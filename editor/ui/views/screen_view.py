@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QFrame, Q
                                QHBoxLayout, QInputDialog, QLabel, QMessageBox, QToolButton, QVBoxLayout,
                                QWidget)
 
-from screenscript import ImageLibrary, ImagePath, Key, Pattern
+from ...plugins.screenscript import ImageLibrary, ImagePath, Key, Pattern
 
 from ...agent.context_factory import ContextFactory
 from .. import icons

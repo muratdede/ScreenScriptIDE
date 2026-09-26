@@ -18,7 +18,7 @@ from typing import Optional, Tuple
 
 from PySide6.QtCore import QObject, Signal
 
-from adb_capture import AdbDevice, AdbScreencapSource, AdbStreamSource, FrameSource, ScreencapFormat
+from ..plugins.adb_capture import AdbDevice, AdbScreencapSource, AdbStreamSource, FrameSource, ScreencapFormat
 
 from .app_settings import AppConfig
 

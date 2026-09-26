@@ -20,7 +20,7 @@ from typing import Optional, Tuple
 import cv2
 from PySide6.QtCore import QObject, Signal
 
-from screenscript import TelegramNotifier
+from ..plugins.screenscript import TelegramNotifier
 
 from .app_settings import AppConfig, telegram_cache_path
 from .grabber import ScreenGrabber

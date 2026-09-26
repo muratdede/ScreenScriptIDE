@@ -1,4 +1,5 @@
-"""Script süreci giriş noktası. Editör bu modülü ayrı bir Python süreci olarak başlatır."""
+"""Script süreci. Editör bu modülü ayrı bir Python süreci olarak başlatır (ScriptSession);
+kullanıcının doğrudan çalıştırdığı bir giriş noktası değildir."""
 
 from __future__ import annotations
 
@@ -8,18 +9,15 @@ import logging
 import os
 import sys
 
-import adb_capture
-import screenscript
-from screenscript import ScriptRunner
-
 from .. import __file__ as _editor_init
 from ..core.project import Project, ProjectConfig
 from ..core.protocol import Command, Event
+from ..plugins.screenscript import ScriptRunner
 from .context_factory import ContextFactory
 
 
 def parse_args():
-    p = argparse.ArgumentParser(prog="editor.agent")
+    p = argparse.ArgumentParser(prog="editor.agent.runner")
     p.add_argument("--project", required=True)
     p.add_argument("--script", required=True)
     p.add_argument("--config", help="ProjectConfig JSON dosyası (boşsa projedeki okunur)")
@@ -67,8 +65,7 @@ def main() -> int:
     while start.get("type") != Command.START:
         start = channel.commands.get()
 
-    library_roots = [os.path.dirname(m.__file__) for m in (adb_capture, screenscript)]
-    library_roots.append(os.path.dirname(_editor_init))
+    library_roots = [os.path.dirname(_editor_init)]   # editör + eklentiler (editor/plugins)
     debugger = ScriptDebugger(
         channel,
         user_roots=[project.root, os.path.dirname(script)],

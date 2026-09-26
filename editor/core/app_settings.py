@@ -3,7 +3,7 @@
 Hepsi tek klasörde durur: %LOCALAPPDATA%\\ScreenScript  (Linux/macOS: ~/.local/share/ScreenScript)
     ide.ini              — IDE durumu: pencere yerleşimi, son projeler, açık dosyalar (QSettings, INI)
     settings.json        — uygulama ayarları (cihaz bağlantısı, Telegram bot token'ı ...); Qt gerektirmez,
-                           script süreci (editor.agent) de buradan okur
+                           script süreci (editor.agent.runner) de buradan okur
     telegram_chats.json  — kullanıcı adı -> chat_id önbelleği
     *.session            — Telegram oturum dosyaları (çalışma alanında tutulmaz)
 

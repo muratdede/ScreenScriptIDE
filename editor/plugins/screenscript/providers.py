@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
-from adb_capture import FrameSource, LatestFrameBuffer, PeriodicCapturer
+from ..adb_capture import FrameSource, LatestFrameBuffer, PeriodicCapturer
 
 
 class ImageProvider(ABC):

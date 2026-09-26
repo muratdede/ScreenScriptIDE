@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from adb_capture import ScreencapFormat
-from screenscript import (ContextBuilder, HumanizedInputDriver, MultiScaleMatcher, ScriptContext,
+from ..plugins.adb_capture import ScreencapFormat
+from ..plugins.screenscript import (ContextBuilder, HumanizedInputDriver, MultiScaleMatcher, ScriptContext,
                           Settings, TelegramNotifier, TemplateMatcher)
 
 from ..core.app_settings import AppConfig, telegram_cache_path

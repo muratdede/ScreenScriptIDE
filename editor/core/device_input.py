@@ -12,8 +12,8 @@ from typing import Callable, Optional, Tuple
 
 from PySide6.QtCore import QObject, Signal
 
-from adb_capture import AdbDevice
-from screenscript import AdbInputDriver, Location
+from ..plugins.adb_capture import AdbDevice
+from ..plugins.screenscript import AdbInputDriver, Location
 
 from .app_settings import AppConfig
 

@@ -208,7 +208,7 @@ class AppSettingsDialog(QDialog):
         self._test_result.setText("Gönderiliyor…")
 
         def work():
-            from screenscript import TelegramNotifier
+            from ..plugins.screenscript import TelegramNotifier
             try:
                 TelegramNotifier(token, user, cache_path=app_settings.telegram_cache_path()) \
                     .send_text("ScreenScript IDE: test bildirimi ✔")

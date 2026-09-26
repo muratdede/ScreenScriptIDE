@@ -7,7 +7,7 @@ import time
 from abc import ABC, abstractmethod
 from enum import IntEnum
 
-from adb_capture import AdbDevice
+from ..adb_capture import AdbDevice
 
 from .geometry import Location
 

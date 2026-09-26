@@ -88,7 +88,7 @@ class ScriptSession(QObject):
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(request.project.config.to_dict(), f)
 
-        args = ["-u", "-m", "editor.agent", "--project", request.project.root,
+        args = ["-u", "-m", "editor.agent.runner", "--project", request.project.root,
                 "--script", request.script, "--config", self._config_file]
         if request.debug:
             self._server = QTcpServer(self)
