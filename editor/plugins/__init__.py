@@ -1,8 +1,9 @@
-"""Editörün arka uç eklentileri. Editör bunları paket olarak içerir (include); ayrı giriş noktaları yoktur.
+"""Backend plugins of the editor. The editor includes them as packages; they have no separate entry points.
 
-    adb_capture    ADB erişimi + kare yakalama (screencap / h264 akışı)
-    screenscript   SikuliX tarzı görsel otomasyon API'si (adb_capture'ı kullanır)
+    adb_capture    ADB access + frame capture (screencap / h264 stream)
+    screenscript   SikuliX style visual automation API (uses adb_capture)
 
-Eklentiler Qt import etmez ve editor.core / editor.ui'ya bağımlı değildir; script süreci
-(editor.agent.runner) hafif kalsın diye. Eklentiler arası importlar göreli yapılır (from ..adb_capture).
+Plugins do not import Qt and do not depend on editor.core / editor.ui, so that the script process
+(editor.agent.runner) stays lightweight. The only editor module they use is editor.i18n (Qt-free,
+stdlib only) for translated messages. Imports between plugins are relative (from ..adb_capture).
 """

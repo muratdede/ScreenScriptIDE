@@ -1,6 +1,6 @@
-"""Editör <-> script süreci (agent) arasındaki debug protokolü.
+"""Debug protocol between the editor <-> script process (agent).
 
-TCP üzerinden satır başına bir JSON mesaj. Qt bağımlılığı yoktur; iki taraf da kullanır.
+One JSON message per line over TCP. No Qt dependency; both sides use it.
 """
 
 from __future__ import annotations
@@ -10,9 +10,9 @@ from typing import Any, Dict, List
 
 
 class Command:
-    """Editör -> agent."""
+    """Editor -> agent."""
     START = "start"                  # {breakpoints, stop_on_entry}
-    SET_BREAKPOINTS = "set_breakpoints"  # {breakpoints: {dosya: [satır,...]}}
+    SET_BREAKPOINTS = "set_breakpoints"  # {breakpoints: {file: [line,...]}}
     CONTINUE = "continue"
     STEP_INTO = "step_into"
     STEP_OVER = "step_over"
@@ -23,7 +23,7 @@ class Command:
 
 
 class Event:
-    """Agent -> editör."""
+    """Agent -> editor."""
     READY = "ready"
     PAUSED = "paused"                # {file, line, reason, stack:[{file,line,function,variables}]}
     RESUMED = "resumed"
@@ -38,7 +38,7 @@ def encode(kind: str, **payload: Any) -> bytes:
 
 
 class LineDecoder:
-    """Parça parça gelen baytları tam JSON mesajlarına çevirir."""
+    """Turns bytes arriving in chunks into complete JSON messages."""
 
     def __init__(self):
         self._buffer = b""

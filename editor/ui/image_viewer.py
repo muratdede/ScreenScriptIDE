@@ -1,4 +1,4 @@
-"""Görsel sekmesi: proje görsellerini editör alanında bir dosya gibi açar."""
+"""Image tab: opens project images in the editor area like a file."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QGraphicsScene, QGraphicsView, QHBoxLayout, QLabe
                                QWidget)
 
 from ..core.context import EditorContext
+from ..i18n import tr
 from . import icons
 
 
@@ -24,14 +25,14 @@ def _checker_brush() -> QBrush:
 
 
 class _ImageCanvas(QGraphicsView):
-    """Ctrl+tekerlek = yakınlaştır. Görsel sürüklenirse koda göreli yolu bırakılır."""
+    """Ctrl+wheel = zoom. Dragging the image drops its relative path into code."""
 
     def __init__(self, viewer: "ImageViewer"):
         super().__init__(viewer)
         self._viewer = viewer
         self.setScene(QGraphicsScene(self))
         self.setBackgroundBrush(QColor("#1e1f22"))
-        self.setRenderHint(QPainter.SmoothPixmapTransform, False)   # pikselleri net göster
+        self.setRenderHint(QPainter.SmoothPixmapTransform, False)   # show pixels sharp
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setAlignment(Qt.AlignCenter)
         self._press = None
@@ -82,13 +83,13 @@ class ImageViewer(QWidget):
         bar = QHBoxLayout(bar_host)
         bar.setContentsMargins(8, 3, 8, 3)
         bar.setSpacing(2)
-        self._button(bar, "fit", "Pencereye sığdır", self.fit)
-        self._button(bar, "actual", "Gerçek boyut (1:1)", self.actual_size)
-        self._button(bar, "add", "Yakınlaştır (Ctrl+tekerlek)", lambda: self.zoom(1.25))
-        self._button(bar, "minimize", "Uzaklaştır (Ctrl+tekerlek)", lambda: self.zoom(0.8))
+        self._button(bar, "fit", tr("Fit to window"), self.fit)
+        self._button(bar, "actual", tr("Actual size (1:1)"), self.actual_size)
+        self._button(bar, "add", tr("Zoom in (Ctrl+wheel)"), lambda: self.zoom(1.25))
+        self._button(bar, "minimize", tr("Zoom out (Ctrl+wheel)"), lambda: self.zoom(0.8))
         bar.addSpacing(8)
-        test = self._button(bar, "match", "Ekran görüntüsünde test et", self._test)
-        test.setText("Ekranda test et")
+        test = self._button(bar, "match", tr("Test on screenshot"), self._test)
+        test.setText(tr("Test on screen"))
         test.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         bar.addStretch()
         self._info = QLabel()
@@ -112,7 +113,7 @@ class ImageViewer(QWidget):
         layout.addWidget(b)
         return b
 
-    # ---- belge arayüzü (EditorTabs için) --------------------------------- #
+    # ---- document interface (for EditorTabs) ----------------------------- #
     @property
     def path(self) -> str:
         return self._path
@@ -128,7 +129,7 @@ class ImageViewer(QWidget):
     def load(self) -> None:
         pm = QPixmap(self._path)
         if pm.isNull():
-            raise OSError(f"Görsel okunamadı: {self._path}")
+            raise OSError(tr("Image could not be read: {path}", path=self._path))
         first = self._pixmap.isNull()
         self._pixmap = pm
         self._mtime = os.path.getmtime(self._path)
@@ -136,7 +137,7 @@ class ImageViewer(QWidget):
         self._canvas.scene().setSceneRect(QRectF(pm.rect()))
         self._update_info()
         if first:
-            # küçük şablonlar büyütülerek, büyükler sığdırılarak açılır
+            # small templates open enlarged, large ones fitted
             self.actual_size()
             if pm.width() < 200 and pm.height() < 200:
                 self.zoom(min(4.0, 240 / max(pm.width(), pm.height(), 1)))
@@ -151,7 +152,7 @@ class ImageViewer(QWidget):
     def thumbnail(self) -> QPixmap:
         return self._pixmap.scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-    # ---- görünüm --------------------------------------------------------- #
+    # ---- view ------------------------------------------------------------ #
     def zoom(self, factor: float) -> None:
         self._scale = min(max(self._scale * factor, 0.05), 40.0)
         self._apply_scale()

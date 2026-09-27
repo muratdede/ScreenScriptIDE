@@ -1,4 +1,4 @@
-"""SikuliX tarzı görsel script API'si (ADB üzerinden)."""
+"""SikuliX style visual script API (over ADB)."""
 
 from .engine import Engine, SearchResult
 from .errors import FindFailed, ImageNotFound, NotificationError, ScriptError, TextNotFound

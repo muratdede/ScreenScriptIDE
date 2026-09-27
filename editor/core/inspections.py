@@ -1,20 +1,20 @@
-"""pyflakes'in kapsamadığı IDE denetimleri (PyCharm'daki inceleme listesi örnek alınmıştır).
+"""IDE inspections not covered by pyflakes (modeled on PyCharm's inspection list).
 
-Qt bağımsızdır; derlenmiş ast ağacı üzerinde çalışır ve (satır, sütun, bitiş, önem, mesaj, kod)
-demetleri üretir. Sütunlar Python str indeksidir.
+Qt-independent; works on the compiled ast tree and produces (line, column, end, severity, message, code)
+tuples. Columns are Python str indexes.
 
-Denetimler:
-  - Çözümlenemeyen nitelik: self.x / modul.x / API_NESNESI.x (attributes.py)
-  - Çağrı argümanları: projede tanımlı fonksiyon/sınıf/metotlar ve script API'si için eksik,
-    fazla ya da beklenmeyen argümanlar (çalışınca TypeError verecek çağrılar)
-  - Bulunamayan modül importları
-  - Erişilemeyen kod (return/raise/break/continue sonrası)
-  - Metodun ilk parametresi (self / cls)
-  - Yerleşik ya da script API isimlerini gölgeleme
-  - Değiştirilebilir varsayılan argüman, None/True/False ile == karşılaştırması
-  - Çıplak `except:`, etkisiz ifade, kendine atama, modül düzeyinde `global`,
-    `__init__` içinde değer döndürme
-  - Derleyici uyarıları (geçersiz kaçış dizisi, …)
+Inspections:
+  - Unresolved attribute: self.x / module.x / API_OBJECT.x (attributes.py)
+  - Call arguments: missing, extra or unexpected arguments for functions/classes/methods defined in
+    the project and the script API (calls that would raise TypeError at runtime)
+  - Unresolved module imports
+  - Unreachable code (after return/raise/break/continue)
+  - First parameter of a method (self / cls)
+  - Shadowing builtin or script API names
+  - Mutable default argument, == comparison with None/True/False
+  - Bare `except:`, statement without effect, self assignment, `global` at module level,
+    returning a value from `__init__`
+  - Compiler warnings (invalid escape sequence, …)
 """
 
 from __future__ import annotations
@@ -29,29 +29,31 @@ import sys
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
+from ..i18n import tr
+
 ERROR = "error"
 WARNING = "warning"
 
-Issue = tuple   # (satır, sütun, bitiş sütunu, önem, mesaj, kod[, önerilen isim])
+Issue = tuple   # (line, column, end column, severity, message, code[, suggested name])
 
 BUILTIN_NAMES = frozenset(n for n in dir(_builtins) if not n.startswith("_"))
-# gölgelenmesi sık ve zararsız olanlar (PyCharm da bunlar için sessiz kalabiliyor)
+# names that are often and harmlessly shadowed (PyCharm may stay silent for them too)
 _SHADOW_OK = frozenset({"_", "copyright", "credits", "license", "exit", "quit", "help"})
 
 
 def char_col(line_text: str, byte_col: int) -> int:
-    """ast sütunu UTF-8 bayt ofsetidir; Python str indeksine çevir."""
+    """An ast column is a UTF-8 byte offset; convert it to a Python str index."""
     return len(line_text.encode("utf-8")[:max(0, byte_col)].decode("utf-8", errors="ignore"))
 
 
 # --------------------------------------------------------------------------- #
-# İmzalar
+# Signatures
 # --------------------------------------------------------------------------- #
 @dataclass
 class Signature:
-    """Çağrı denetimi için sadeleştirilmiş imza."""
-    positional: List[str] = field(default_factory=list)     # posonly + normal (sırayla)
-    posonly: int = 0                                         # ilk kaç tanesi yalnızca konumsal
+    """Simplified signature for call checking."""
+    positional: List[str] = field(default_factory=list)     # posonly + normal (in order)
+    posonly: int = 0                                         # how many of the first ones are positional-only
     required_positional: Set[str] = field(default_factory=set)
     kwonly: List[str] = field(default_factory=list)
     required_kwonly: Set[str] = field(default_factory=set)
@@ -97,7 +99,7 @@ class Signature:
 
     def without_first(self) -> "Signature":
         if not self.positional:
-            return self   # *args ile alan metot: dokunma
+            return self   # method taking *args: leave it
         first = self.positional[0]
         return Signature(self.positional[1:], max(0, self.posonly - 1), self.required_positional - {first},
                          self.kwonly, self.required_kwonly, self.varargs, self.varkw, self.label)
@@ -105,35 +107,37 @@ class Signature:
 
 def _check_call(call: ast.Call, sig: Signature, lines: List[str]) -> List[Issue]:
     if any(isinstance(a, ast.Starred) for a in call.args) or any(k.arg is None for k in call.keywords):
-        return []   # *seq / **map: argüman sayısı derleme anında bilinemez
+        return []   # *seq / **map: the argument count is unknown at compile time
     out: List[Issue] = []
     name = sig.label
     n = len(call.args)
     if n > len(sig.positional) and not sig.varargs:
         extra = call.args[len(sig.positional)]
-        out.append(_issue(extra, lines, ERROR, f"{name}(): en fazla {len(sig.positional)} konumsal argüman "
-                                               f"alır, {n} verildi", "TooManyArguments"))
+        out.append(_issue(extra, lines, ERROR, tr("{name}(): takes at most {max} positional arguments, {given} given",
+                                                  name=name, max=len(sig.positional), given=n), "TooManyArguments"))
     filled = set(sig.positional[:n])
     kw_names = set(sig.positional[sig.posonly:]) | set(sig.kwonly)
     for kw in call.keywords:
         if kw.arg in filled:
-            out.append(_kw_issue(kw, lines, ERROR, f"{name}(): '{kw.arg}' parametresine birden fazla değer",
+            out.append(_kw_issue(kw, lines, ERROR, tr("{name}(): multiple values for parameter '{param}'",
+                                                    name=name, param=kw.arg),
                                  "DuplicateArgumentValue"))
         elif kw.arg not in kw_names and not sig.varkw:
-            out.append(_kw_issue(kw, lines, ERROR, f"{name}(): beklenmeyen argüman '{kw.arg}'",
+            out.append(_kw_issue(kw, lines, ERROR, tr("{name}(): unexpected argument '{param}'", name=name, param=kw.arg),
                                  "UnexpectedArgument"))
         filled.add(kw.arg)
     missing = [p for p in sig.positional if p in sig.required_positional and p not in filled]
     missing += [p for p in sig.kwonly if p in sig.required_kwonly and p not in filled]
     if missing:
         names = ", ".join(f"'{p}'" for p in missing)
-        out.append(_issue(call.func, lines, ERROR, f"{name}(): eksik argüman {names}", "MissingArgument",
+        out.append(_issue(call.func, lines, ERROR, tr("{name}(): missing argument {params}", name=name, params=names),
+                          "MissingArgument",
                           name_only=True))
     return out
 
 
 # --------------------------------------------------------------------------- #
-# Konum yardımcıları
+# Position helpers
 # --------------------------------------------------------------------------- #
 def _line(lines: List[str], n: int) -> str:
     return lines[n - 1] if 0 < n <= len(lines) else ""
@@ -141,8 +145,8 @@ def _line(lines: List[str], n: int) -> str:
 
 def _issue(node: ast.AST, lines: List[str], severity: str, message: str, code: str,
            name_only: bool = False) -> Issue:
-    """Düğümün kapladığı aralık (çok satırlıysa ilk satırın sonuna kadar)."""
-    if name_only and isinstance(node, ast.Attribute):   # a.b.metot(...) -> yalnızca 'metot'
+    """Range covered by the node (up to the end of the first line if it spans multiple lines)."""
+    if name_only and isinstance(node, ast.Attribute):   # a.b.method(...) -> only 'method'
         lt = _line(lines, node.end_lineno)
         end = char_col(lt, node.end_col_offset)
         return node.end_lineno, end - len(node.attr), end, severity, message, code
@@ -159,7 +163,7 @@ def _kw_issue(kw: ast.keyword, lines: List[str], severity: str, message: str, co
 
 
 def _def_name_range(node, lines: List[str]) -> Tuple[int, int]:
-    """`def isim` / `class isim` içindeki ismin sütun aralığı."""
+    """Column range of the name in `def name` / `class name`."""
     lt = _line(lines, node.lineno)
     m = re.compile(r"\b(?:def|class)\s+(" + re.escape(node.name) + r")\b").search(lt)
     if m:
@@ -180,7 +184,7 @@ def _decorator_names(node) -> Set[str]:
 
 
 # --------------------------------------------------------------------------- #
-# Modül bulma (önbellekli)
+# Module lookup (cached)
 # --------------------------------------------------------------------------- #
 _MODULE_CACHE: Dict[str, bool] = {}
 
@@ -190,7 +194,7 @@ def clear_module_cache() -> None:
 
 
 def _module_exists(name: str, search_dirs: Iterable[str]) -> bool:
-    for d in search_dirs:   # proje içi modüller: önbelleğe alınmaz, dosya eklenince hemen bulunur
+    for d in search_dirs:   # modules inside the project: not cached, found as soon as the file is added
         if d and (os.path.isfile(os.path.join(d, name + ".py")) or
                   os.path.isfile(os.path.join(d, name, "__init__.py")) or
                   os.path.isdir(os.path.join(d, name))):
@@ -208,10 +212,10 @@ def _module_exists(name: str, search_dirs: Iterable[str]) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# Denetleyici
+# Inspector
 # --------------------------------------------------------------------------- #
 def _binding_names(tree: ast.AST) -> Dict[str, int]:
-    """Dosyanın herhangi bir yerinde bağlanan isimler ve kaç kez bağlandıkları."""
+    """Names bound anywhere in the file and how many times they are bound."""
     counts: Dict[str, int] = {}
 
     def add(name: str):
@@ -247,8 +251,8 @@ class _Inspector(ast.NodeVisitor):
         self.search_dirs = search_dirs
         self.issues: List[Issue] = []
         self.bound = _binding_names(tree)
-        self.functions: Dict[str, Signature] = {}          # tek tanımlı modül fonksiyonları
-        self.classes: Dict[str, Optional[Signature]] = {}  # sınıf -> kurucu imzası (None: bilinmiyor)
+        self.functions: Dict[str, Signature] = {}          # module functions defined exactly once
+        self.classes: Dict[str, Optional[Signature]] = {}  # class -> constructor signature (None: unknown)
         self.class_stack: List[ast.ClassDef] = []
         self.func_stack: List[ast.AST] = []
         self._collect(tree)
@@ -256,7 +260,7 @@ class _Inspector(ast.NodeVisitor):
     def add(self, issue: Issue):
         self.issues.append(issue)
 
-    # ---- tanımları topla ------------------------------------------------- #
+    # ---- collect definitions --------------------------------------------- #
     def _collect(self, tree: ast.Module):
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and self.bound.get(node.name) == 1 \
@@ -273,19 +277,19 @@ class _Inspector(ast.NodeVisitor):
 
     @staticmethod
     def _constructor(cls: ast.ClassDef) -> Optional[Signature]:
-        if cls.decorator_list or cls.keywords:   # @dataclass, metaclass=…: kurucu üretiliyor olabilir
+        if cls.decorator_list or cls.keywords:   # @dataclass, metaclass=…: the constructor may be generated
             return None
         init = next((s for s in cls.body if isinstance(s, ast.FunctionDef) and s.name == "__init__"), None)
         if init is not None:
             return Signature.from_ast(init.args, cls.name, drop_first=True) if not init.decorator_list else None
         if any(not (isinstance(b, ast.Name) and b.id == "object") for b in cls.bases):
-            return None   # kurucu üst sınıftan geliyor
+            return None   # the constructor comes from a base class
         if any(isinstance(s, (ast.FunctionDef, ast.AsyncFunctionDef)) and s.name == "__new__" for s in cls.body):
             return None
         return Signature(label=cls.name)
 
     def _method_signature(self, name: str) -> Optional[Signature]:
-        """self.metot(...) için içinde bulunulan sınıftaki metodun imzası."""
+        """For self.method(...): the signature of the method in the enclosing class."""
         if not self.class_stack or not self.func_stack:
             return None
         func = self.func_stack[-1]
@@ -298,12 +302,12 @@ class _Inspector(ast.NodeVisitor):
             return None
         decorators = _decorator_names(defs[0])
         if decorators - {"staticmethod", "classmethod"}:
-            return None   # property, özel dekoratörler
+            return None   # property, custom decorators
         return Signature.from_ast(defs[0].args, name, drop_first="staticmethod" not in decorators)
 
-    # ---- gezinme --------------------------------------------------------- #
+    # ---- traversal ------------------------------------------------------- #
     def _in_class_body(self) -> bool:
-        """Sınıf gövdesindeki isimler (metot, sınıf niteliği) yerleşikleri gölgelemez: obj.open gibi erişilir."""
+        """Names in a class body (method, class attribute) don't shadow builtins: they are accessed like obj.open."""
         return bool(self.class_stack) and not self.func_stack
 
     def visit_ClassDef(self, node: ast.ClassDef):
@@ -332,15 +336,15 @@ class _Inspector(ast.NodeVisitor):
             if isinstance(d, (ast.List, ast.Dict, ast.Set, ast.ListComp, ast.DictComp, ast.SetComp)) or \
                     (isinstance(d, ast.Call) and isinstance(d.func, ast.Name) and d.func.id in ("list", "dict", "set")
                      and self.bound.get(d.func.id) is None):
-                self.add(_issue(d, self.lines, WARNING, "Değiştirilebilir varsayılan argüman; çağrılar arasında "
-                                                        "paylaşılır (None kullanıp içeride oluşturun)",
+                self.add(_issue(d, self.lines, WARNING, tr("Mutable default argument; it is shared between calls "
+                                                           "(use None and create it inside)"),
                                 "MutableDefaultArgument"))
         if node.name == "__init__" and in_class:
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Return) and sub.value is not None and \
                         not (isinstance(sub.value, ast.Constant) and sub.value.value is None) and \
                         self._owner_function(node, sub):
-                    self.add(_issue(sub, self.lines, ERROR, "__init__ değer döndürmemeli", "InitReturnsValue"))
+                    self.add(_issue(sub, self.lines, ERROR, tr("__init__ should not return a value"), "InitReturnsValue"))
         self._check_body(node.body)
         self.func_stack.append(node)
         self.generic_visit(node)
@@ -355,7 +359,7 @@ class _Inspector(ast.NodeVisitor):
 
     @staticmethod
     def _owner_function(func, target) -> bool:
-        """target, iç içe bir fonksiyona değil doğrudan func'a mı ait?"""
+        """Does target belong directly to func and not to a nested function?"""
         stack = list(ast.iter_child_nodes(func))
         while stack:
             n = stack.pop()
@@ -375,49 +379,49 @@ class _Inspector(ast.NodeVisitor):
         if not params:
             if node.args.vararg is None:
                 self.add((node.lineno, col, end, ERROR,
-                          f"Metodun ilk parametresi olmalı (genellikle '{expected}')", "MethodWithoutSelf"))
+                          tr("Method must have a first parameter (usually '{expected}')", expected=expected), "MethodWithoutSelf"))
             return
         first = params[0].arg
         if first != expected and not (expected == "self" and first in ("cls", "mcs", "metacls")):
             self.add(_issue(params[0], self.lines, WARNING,
-                            f"Metodun ilk parametresi genellikle '{expected}' olarak adlandırılır",
+                            tr("The first parameter of a method is usually named '{expected}'", expected=expected),
                             "SelfParameterName"))
 
-    # ---- deyimler -------------------------------------------------------- #
+    # ---- statements ------------------------------------------------------ #
     def generic_visit(self, node):
         for name in ("body", "orelse", "finalbody"):
             body = getattr(node, name, None)
             if isinstance(body, list) and body and isinstance(body[0], ast.stmt) and \
                     not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                self._check_body(body)   # modül, if/for/while/with/try, except ve case blokları
+                self._check_body(body)   # module, if/for/while/with/try, except and case blocks
         super().generic_visit(node)
 
     def _check_body(self, body: List[ast.stmt]):
-        """Aynı blokta return/raise/break/continue'dan sonra gelen deyim hiç çalışmaz."""
+        """A statement after return/raise/break/continue in the same block never runs."""
         for prev, stmt in zip(body, body[1:]):
             if isinstance(prev, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
                 lt = _line(self.lines, stmt.lineno)
                 col = char_col(lt, stmt.col_offset)
                 end = len(lt.rstrip()) if stmt.end_lineno != stmt.lineno else char_col(lt, stmt.end_col_offset)
-                self.add((stmt.lineno, col, max(col, end), WARNING, "Erişilemeyen kod", "UnreachableCode"))
+                self.add((stmt.lineno, col, max(col, end), WARNING, tr("Unreachable code"), "UnreachableCode"))
                 break
 
     def visit_Expr(self, node: ast.Expr):
         v = node.value
-        if isinstance(v, ast.Constant):   # docstring / yorum yerine string ve ... serbest
+        if isinstance(v, ast.Constant):   # strings (docstring / comment) and ... are allowed
             no_effect = not isinstance(v.value, str) and v.value is not Ellipsis
-        else:   # içinde çağrı olan ifade (ör. `a.add(x) if k else a.discard(x)`) etkilidir
+        else:   # an expression containing a call (e.g. `a.add(x) if k else a.discard(x)`) has an effect
             no_effect = not any(isinstance(n, (ast.Call, ast.Await, ast.Yield, ast.YieldFrom, ast.NamedExpr))
                                 for n in ast.walk(v))
         if no_effect:
-            self.add(_issue(node, self.lines, WARNING, "İfadenin hiçbir etkisi yok", "StatementHasNoEffect"))
+            self.add(_issue(node, self.lines, WARNING, tr("Statement has no effect"), "StatementHasNoEffect"))
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign):
         if isinstance(node.value, ast.Name):
             for t in node.targets:
                 if isinstance(t, ast.Name) and t.id == node.value.id:
-                    self.add(_issue(node, self.lines, WARNING, f"'{t.id}' kendisine atanıyor", "SelfAssignment"))
+                    self.add(_issue(node, self.lines, WARNING, tr("'{name}' is assigned to itself", name=t.id), "SelfAssignment"))
         self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name):
@@ -426,15 +430,15 @@ class _Inspector(ast.NodeVisitor):
 
     def visit_Global(self, node: ast.Global):
         if not self.func_stack and not self.class_stack:
-            self.add(_issue(node, self.lines, WARNING, "Modül düzeyinde 'global' gereksiz", "GlobalAtModuleLevel"))
+            self.add(_issue(node, self.lines, WARNING, tr("'global' at module level is unnecessary"), "GlobalAtModuleLevel"))
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler):
         if node.type is None:
             lt = _line(self.lines, node.lineno)
             col = char_col(lt, node.col_offset)
             self.add((node.lineno, col, col + len("except"), WARNING,
-                      "Çok geniş istisna yakalama: 'except:' KeyboardInterrupt/SystemExit'i de yutar "
-                      "(except Exception: kullanın)", "BareExcept"))
+                      tr("Too broad exception clause: 'except:' also swallows KeyboardInterrupt/SystemExit "
+                         "(use except Exception:)"), "BareExcept"))
         elif node.name:
             self._check_shadow(node.name, node)
         self.generic_visit(node)
@@ -447,14 +451,14 @@ class _Inspector(ast.NodeVisitor):
                     if isinstance(side, ast.Constant) and (side.value is None or isinstance(side.value, bool)):
                         suggestion = "is" if isinstance(op, ast.Eq) else "is not"
                         what = repr(side.value)
-                        msg = (f"{what} ile karşılaştırmada '{suggestion}' kullanın" if side.value is None else
-                               f"{what} ile == karşılaştırması gereksiz; koşulu doğrudan kullanın")
+                        msg = (tr("Use '{op}' for comparison with {value}", op=suggestion, value=what) if side.value is None else
+                               tr("== comparison with {value} is unnecessary; use the condition directly", value=what))
                         self.add(_issue(node, self.lines, WARNING, msg, "ComparisonWithSingleton"))
                         break
             left = right
         self.generic_visit(node)
 
-    # ---- importlar -------------------------------------------------------- #
+    # ---- imports --------------------------------------------------------- #
     def visit_Import(self, node: ast.Import):
         for alias in node.names:
             self._check_module(node, alias.name, alias)
@@ -475,16 +479,16 @@ class _Inspector(ast.NodeVisitor):
         lt = _line(self.lines, node.lineno)
         m = re.search(r"(?<![\w.])" + re.escape(dotted) + r"(?![\w])", lt)
         col, end = (m.start(), m.end()) if m else (char_col(lt, node.col_offset), len(lt.rstrip()))
-        self.add((node.lineno, col, end, ERROR, f"'{top}' modülü bulunamadı", "UnresolvedImport"))
+        self.add((node.lineno, col, end, ERROR, tr("Module '{module}' not found", module=top), "UnresolvedImport"))
 
-    # ---- gölgeleme -------------------------------------------------------- #
+    # ---- shadowing ------------------------------------------------------- #
     def _check_shadow(self, name: str, node: ast.AST, col: Optional[int] = None, end: Optional[int] = None):
         if name in _SHADOW_OK:
             return
         if name in self.api:
-            msg, code = f"Script API ismi '{name}' gölgeleniyor", "ShadowsApiName"
+            msg, code = tr("Shadows script API name '{name}'", name=name), "ShadowsApiName"
         elif name in BUILTIN_NAMES:
-            msg, code = f"Yerleşik isim '{name}' gölgeleniyor", "ShadowsBuiltin"
+            msg, code = tr("Shadows built-in name '{name}'", name=name), "ShadowsBuiltin"
         else:
             return
         lt = _line(self.lines, node.lineno)
@@ -493,7 +497,7 @@ class _Inspector(ast.NodeVisitor):
             col, end = (m.start(), m.end()) if m else (char_col(lt, node.col_offset), char_col(lt, node.col_offset))
         self.add((node.lineno, col, end, WARNING, msg, code))
 
-    # ---- çağrılar --------------------------------------------------------- #
+    # ---- calls ----------------------------------------------------------- #
     def visit_Call(self, node: ast.Call):
         sig = self._resolve(node.func)
         if sig is not None:
@@ -522,7 +526,7 @@ _ESCAPE = re.compile(r"invalid escape sequence '(\\.)'")
 
 
 def compiler_warnings(warnings_list, lines: List[str]) -> List[Issue]:
-    """compile() sırasında yakalanan SyntaxWarning'ler (geçersiz kaçış dizisi, …)."""
+    """SyntaxWarnings caught during compile() (invalid escape sequence, …)."""
     out: List[Issue] = []
     for w in warnings_list:
         if not issubclass(w.category, SyntaxWarning):
@@ -534,7 +538,7 @@ def compiler_warnings(warnings_list, lines: List[str]) -> List[Issue]:
             col = lt.find(m.group(1))
             col, end = (col, col + 2) if col >= 0 else (0, 0)
             out.append((w.lineno or 1, col, end, WARNING,
-                        f"Geçersiz kaçış dizisi '{m.group(1)}' (ham string r\"…\" ya da '\\\\' kullanın)",
+                        tr("Invalid escape sequence '{seq}' (use a raw string r\"…\" or '\\\\')", seq=m.group(1)),
                         "InvalidEscapeSequence"))
         else:
             out.append((w.lineno or 1, 0, 0, WARNING, text, "SyntaxWarning"))

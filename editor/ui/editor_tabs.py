@@ -1,5 +1,5 @@
-"""Açık dosya sekmeleri. DocumentService arayüzünü uygular.
-Kod dosyaları CodeEditor, görseller ImageViewer ile açılır; ikisi de path / is_dirty / load / set_path sağlar."""
+"""Open file tabs. Implements the DocumentService interface.
+Code files open with CodeEditor, images with ImageViewer; both provide path / is_dirty / load / set_path."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QApplication, QMessageBox, QTabBar, QTabWidget, QToolButton
 
 from ..core.context import DocumentService, EditorContext
+from ..i18n import tr
 from . import icons
 from .code_editor import IMAGE_EXTENSIONS, CodeEditor, file_stamp
 from .image_viewer import ImageViewer
@@ -24,7 +25,7 @@ def _norm(p: str) -> str:
 
 
 class EditorTabs(QTabWidget, DocumentService):
-    cursor_moved = Signal(int, int)   # satır, sütun
+    cursor_moved = Signal(int, int)   # line, column
 
     TEXT_EXTENSIONS = (".py", ".txt", ".md", ".json", ".cfg", ".ini", ".yaml", ".yml", ".csv", ".log")
     POLL_INTERVAL_MS = 500
@@ -39,14 +40,14 @@ class EditorTabs(QTabWidget, DocumentService):
         self.setElideMode(Qt.ElideNone)
         self.setUsesScrollButtons(True)
         self.tabBar().setExpanding(False)
-        self.tabBar().installEventFilter(self)   # orta tık = kapat
+        self.tabBar().installEventFilter(self)   # middle click = close
         self.currentChanged.connect(self._on_current_changed)
 
-        # dışarıda değişen açık dosyalar: watcher anlık haber verir, yoklama kaçırdıklarını yakalar
+        # open files changed externally: the watcher reports instantly, polling catches what it misses
         self._asking = False
         self._watcher = QFileSystemWatcher(self)
         self._watcher.fileChanged.connect(lambda _p: self._sync_timer.start())
-        self._sync_timer = QTimer(self, singleShot=True, interval=100)   # atomik yazmaları bekle
+        self._sync_timer = QTimer(self, singleShot=True, interval=100)   # wait for atomic writes
         self._sync_timer.timeout.connect(self.check_external_changes)
         self._poll = QTimer(self, interval=self.POLL_INTERVAL_MS)
         self._poll.timeout.connect(self.check_external_changes)
@@ -105,7 +106,7 @@ class EditorTabs(QTabWidget, DocumentService):
             try:
                 doc.load()
             except OSError as e:
-                QMessageBox.warning(self, "Açılamadı", str(e))
+                QMessageBox.warning(self, tr("Could not be opened"), str(e))
                 doc.deleteLater()
                 return None
             index = self.addTab(doc, icons.file_icon(path), os.path.basename(path))
@@ -138,11 +139,11 @@ class EditorTabs(QTabWidget, DocumentService):
         e.insertPlainText(text)
         e.setFocus()
 
-    # ---- sekmeler -------------------------------------------------------- #
+    # ---- tabs ------------------------------------------------------------ #
     def _add_close_button(self, doc) -> None:
         btn = QToolButton()
         btn.setIcon(icons.icon("close", "#9da0a8", 14))
-        btn.setToolTip("Kapat (Ctrl+W)")
+        btn.setToolTip(tr("Close (Ctrl+W)"))
         btn.setFixedSize(18, 18)
         btn.setStyleSheet("QToolButton { padding: 0; border-radius: 4px; }")
         btn.clicked.connect(lambda: self.close_tab(self.indexOf(doc)))
@@ -163,7 +164,7 @@ class EditorTabs(QTabWidget, DocumentService):
             return True
         if isinstance(doc, CodeEditor) and doc.is_dirty:
             answer = QMessageBox.question(
-                self, "Kaydedilmemiş değişiklik", f"{os.path.basename(doc.path)} kaydedilsin mi?",
+                self, tr("Unsaved changes"), tr("Save {name}?", name=os.path.basename(doc.path)),
                 QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
             if answer == QMessageBox.Cancel:
                 return False
@@ -184,7 +185,7 @@ class EditorTabs(QTabWidget, DocumentService):
         return True
 
     def rename_path(self, old: str, new: str) -> None:
-        """Dosya ya da klasör yeniden adlandırıldı: etkilenen sekmelerin yollarını güncelle."""
+        """A file or folder was renamed: update the paths of the affected tabs."""
         old_key = _norm(old)
         for doc in self.documents():
             key = _norm(doc.path)
@@ -207,9 +208,9 @@ class EditorTabs(QTabWidget, DocumentService):
             self.setTabIcon(i, icons.file_icon(target))
         self._on_current_changed(self.currentIndex())
 
-    # ---- dış değişiklikler ----------------------------------------------- #
+    # ---- external changes ------------------------------------------------ #
     def check_external_changes(self) -> None:
-        """Açık dosyalar diskte değiştiyse yeniden yükle. Kaydedilmemiş değişikliği olan editör için sorar."""
+        """Reloads open files that changed on disk. Asks for editors with unsaved changes."""
         self._rewatch()
         if self._asking:
             return
@@ -219,7 +220,7 @@ class EditorTabs(QTabWidget, DocumentService):
                 continue
             stamp = file_stamp(doc.path)
             if stamp is None or stamp == doc.disk_stamp:
-                continue   # silinmiş (belki atomik kaydın ortasında) ya da değişmemiş
+                continue   # deleted (maybe in the middle of an atomic save) or unchanged
             if not doc.is_dirty:
                 self._reload(doc)
             elif QApplication.applicationState() == Qt.ApplicationActive:
@@ -236,14 +237,14 @@ class EditorTabs(QTabWidget, DocumentService):
         try:
             self.setCurrentWidget(editor)
             answer = QMessageBox.question(
-                self, "Dosya dışarıda değişti",
-                f"{os.path.basename(editor.path)} diskte değişti, editörde kaydedilmemiş değişiklikler var.\n\n"
-                "Diskteki sürüm yüklensin mi? (Hayır: editördeki hali korunur)",
+                self, tr("File changed externally"),
+                tr("{name} changed on disk, and the editor has unsaved changes.\n\n"
+                   "Load the version on disk? (No: the editor's version is kept)", name=os.path.basename(editor.path)),
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if answer == QMessageBox.Yes:
                 self._reload(editor)
             else:
-                editor.disk_stamp = file_stamp(editor.path)   # bu değişiklik için bir daha sorma
+                editor.disk_stamp = file_stamp(editor.path)   # don't ask again for this change
         finally:
             self._asking = False
 
@@ -260,7 +261,7 @@ class EditorTabs(QTabWidget, DocumentService):
             editor.save()
             return True
         except OSError as e:
-            QMessageBox.warning(self, "Kaydedilemedi", str(e))
+            QMessageBox.warning(self, tr("Could not be saved"), str(e))
             return False
 
     def _update_title(self, editor: CodeEditor) -> None:
@@ -286,12 +287,12 @@ class EditorTabs(QTabWidget, DocumentService):
         super().paintEvent(event)
         if self.count():
             return
-        # boş editör alanı: IntelliJ'deki gibi kısayol ipuçları
+        # empty editor area: shortcut hints like in IntelliJ
         p = QPainter(self)
         p.fillRect(self.rect(), THEME.background)
-        hints = [("Projeyi aç", "Ctrl+Shift+O"), ("Yeni script", "Ctrl+N"), ("Dosyalarda bul", "Ctrl+Shift+F"),
-                 ("Çalıştır", "Shift+F10"), ("Debug", "F5"), ("Ekranı canlı yakala", "Ctrl+Shift+G"),
-                 ("Paneller", "Alt+1 … Alt+6")]
+        hints = [(tr("Open project"), "Ctrl+Shift+O"), (tr("New script"), "Ctrl+N"),
+                 (tr("Find in files"), "Ctrl+Shift+F"), (tr("Run"), "Shift+F10"), (tr("Debug"), "F5"),
+                 (tr("Capture the screen live"), "Ctrl+Shift+G"), (tr("Panels"), "Alt+1 … Alt+6")]
         line_h = 28
         top = self.height() // 2 - len(hints) * line_h // 2
         mid = self.width() // 2
@@ -303,7 +304,7 @@ class EditorTabs(QTabWidget, DocumentService):
             p.drawText(QRect(mid + 8, y, mid, line_h), Qt.AlignLeft | Qt.AlignVCenter, key)
         p.end()
 
-    # ---- debug satırı ---------------------------------------------------- #
+    # ---- debug line ------------------------------------------------------ #
     def _on_paused(self, msg: dict) -> None:
         self._debug_location = (_norm(msg["file"]), int(msg["line"]))
         for e in self.editors():

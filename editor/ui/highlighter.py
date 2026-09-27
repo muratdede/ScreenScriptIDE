@@ -1,7 +1,7 @@
-"""Python sözdizimi renklendirici (script API isimleri ayrı renkte).
+"""Python syntax highlighter (script API names in a separate color).
 
-Kelime kurallarının üstüne, kod denetiminin ürettiği anlamsal belirteçler (kullanıcının sınıfları,
-fonksiyonları, parametreleri, modülleri) set_semantic() ile uygulanır."""
+On top of the word rules, semantic tokens produced by the code inspection (the user's classes,
+functions, parameters, modules) are applied with set_semantic()."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ def _fmt(color: QColor, bold: bool = False, italic: bool = False) -> QTextCharFo
 
 
 def utf16_mapper(text: str) -> Callable[[int], int]:
-    """Python str indeksini QTextDocument (UTF-16) konumuna çevirir. Emoji gibi BMP dışı karakter
-    yoksa ikisi aynıdır."""
+    """Converts a Python str index to a QTextDocument (UTF-16) position. Without non-BMP characters
+    like emoji both are the same."""
     if all(ord(ch) < 0x10000 for ch in text):
         return lambda i: i
     prefix = [0]
@@ -57,18 +57,18 @@ class PythonHighlighter(QSyntaxHighlighter):
         self._add(r"\b(?:0[xX][0-9a-fA-F_]+|\d[\d_]*\.?\d*(?:[eE][+-]?\d+)?)\b", _fmt(THEME.number))
         self._string_fmt = _fmt(THEME.string)
         self._comment_fmt = _fmt(THEME.comment, italic=True)
-        # string/yorum/üçlü tırnak tek regex'le sırayla taranır; böylece '#' string içinde
-        # yorum sayılmaz, yorumdaki tırnak da string başlatmaz
+        # strings/comments/triple quotes are scanned in order by one regex; so a '#' inside a string
+        # is not a comment, and a quote inside a comment doesn't start a string
         self._token = re.compile(
             r"""(?P<tri>[rbfuRBFU]{0,2}(?:\'\'\'|\"\"\"))"""
             r"""|(?P<str>[rbfuRBFU]{0,2}(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'))"""
             r"""|(?P<com>\#.*)""")
-        self._semantic: Dict[int, List[Tuple[int, int, str, str]]] = {}   # satır (1'den) -> belirteçler
+        self._semantic: Dict[int, List[Tuple[int, int, str, str]]] = {}   # line (1-based) -> tokens
         self._semantic_fmt = {CLASS: _fmt(THEME.class_ref), FUNCTION: _fmt(THEME.function_call),
                               PARAMETER: _fmt(THEME.parameter), MODULE: _fmt(THEME.module)}
 
     def set_semantic(self, tokens: Dict[int, List[Tuple[int, int, str, str]]]) -> None:
-        """Yeni anlamsal belirteçler: yalnızca değişen satırlar yeniden boyanır."""
+        """New semantic tokens: only changed lines are repainted."""
         old, self._semantic = self._semantic, tokens
         doc = self.document()
         for line in set(old) | set(tokens):
@@ -88,12 +88,12 @@ class PythonHighlighter(QSyntaxHighlighter):
         if tokens:
             to16 = utf16_mapper(text)
             for start, end, name, kind in tokens:
-                if text[start:end] == name:   # satırlar kaymışsa (yazarken) bir sonraki denetime kadar atla
+                if text[start:end] == name:   # lines shifted (while typing): skip until the next inspection
                     self.setFormat(to16(start), to16(end) - to16(start), self._semantic_fmt[kind])
 
         pos = self._continue_multiline(text)
         if pos < 0:
-            return  # tüm satır çok satırlı string'in içinde
+            return  # the whole line is inside a multi-line string
         while pos < len(text):
             m = self._token.search(text, pos)
             if m is None:

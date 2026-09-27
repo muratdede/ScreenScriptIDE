@@ -1,5 +1,5 @@
-"""Metin arama/değiştirme motoru (Qt bağımsız). Dosyada bul, dosyalarda bul ve yeniden adlandırmada
-referans güncelleme bunu kullanır."""
+"""Text search/replace engine (Qt-independent). Find in file, find in files and reference updates
+when renaming use it."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ class SearchQuery:
     regex: bool = False
 
     def compile(self) -> Optional[re.Pattern]:
-        """Geçersiz regex'te re.error fırlatır; boş sorguda None döner."""
+        """Raises re.error for an invalid regex; returns None for an empty query."""
         if not self.text:
             return None
         body = self.text if self.regex else re.escape(self.text)
@@ -34,15 +34,15 @@ class SearchQuery:
         return re.compile(body, flags)
 
     def expand(self, match: re.Match, replacement: str) -> str:
-        """Regex kipinde \\1, \\g<ad> gibi grupları açar; diğer kipte metni olduğu gibi döndürür."""
+        """In regex mode expands groups like \\1, \\g<name>; otherwise returns the text as is."""
         return match.expand(replacement) if self.regex else replacement
 
 
 @dataclass(frozen=True)
 class LineMatch:
     path: str
-    line: int          # 1'den
-    column: int        # satır içi karakter indeksi (Python str)
+    line: int          # 1-based
+    column: int        # character index within the line (Python str)
     length: int
     line_text: str
 
@@ -52,12 +52,12 @@ def find_in_text(pattern: re.Pattern, text: str, path: str = "", limit: int = 50
     line_starts = [0] + [m.end() for m in _NEWLINE.finditer(text)]
     for m in pattern.finditer(text):
         if m.end() == m.start():
-            continue   # boş eşleşmeleri atla (ör. ^ ya da a*)
+            continue   # skip empty matches (e.g. ^ or a*)
         ln = bisect.bisect_right(line_starts, m.start()) - 1
         start = line_starts[ln]
         end = text.find("\n", start)
         line_text = text[start:] if end < 0 else text[start:end]
-        length = min(m.end(), start + len(line_text)) - m.start()   # çok satırlı eşleşme ilk satırda kırpılır
+        length = min(m.end(), start + len(line_text)) - m.start()   # a multi-line match is cut at the first line
         out.append(LineMatch(path, ln + 1, m.start() - start, max(1, length), line_text))
         if len(out) >= limit:
             break
@@ -65,7 +65,7 @@ def find_in_text(pattern: re.Pattern, text: str, path: str = "", limit: int = 50
 
 
 def replace_in_text(pattern: re.Pattern, query: SearchQuery, text: str, replacement: str) -> tuple:
-    """(yeni metin, değişen sayısı)"""
+    """(new text, number of replacements)"""
     return pattern.subn(lambda m: query.expand(m, replacement), text)
 
 
@@ -97,7 +97,7 @@ def read_text(path: str) -> Optional[str]:
 
 def search_files(root: str, pattern: re.Pattern, masks: Sequence[str] = ("*",),
                  text_for: Optional[Callable[[str], Optional[str]]] = None, limit: int = 2000) -> List[LineMatch]:
-    """text_for(path): açık editördeki (kaydedilmemiş) metni vermek için; None dönerse diskten okunur."""
+    """text_for(path): provides the (unsaved) text of an open editor; read from disk if it returns None."""
     results: List[LineMatch] = []
     for path in iter_files(root, masks):
         text = (text_for(path) if text_for else None)
@@ -112,6 +112,6 @@ def search_files(root: str, pattern: re.Pattern, masks: Sequence[str] = ("*",),
 
 
 def string_literal_pattern(values: Sequence[str]) -> re.Pattern:
-    """"değer" ya da 'değer' biçimindeki string literal'leri bulur (1. grup tırnak, 2. grup değer)."""
+    """Finds string literals of the form "value" or 'value' (group 1 quote, group 2 value)."""
     alts = "|".join(re.escape(v) for v in sorted(set(values), key=len, reverse=True))
     return re.compile(rf"""(["'])({alts})\1""")

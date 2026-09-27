@@ -1,4 +1,4 @@
-"""Periyodik yakalama motoru: bir FrameSource'u arka planda sabit aralıkla okur."""
+"""Periodic capture engine: reads a FrameSource in the background at a fixed interval."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, replace
 from typing import Iterable, List, Optional
 
+from ...i18n import tr
 from .consumers import FrameConsumer
 from .frames import Frame, Region
 from .sources import CaptureError, FrameSource
@@ -26,18 +27,19 @@ class CaptureStats:
 
 
 class PeriodicCapturer:
-    """Kaynağı `interval` saniyede bir yakalar ve kareyi abonelere dağıtır.
+    """Captures the source every `interval` seconds and distributes the frame to subscribers.
 
-    - Sabit ritimde çalışır; yakalama aralıktan uzun sürerse gecikmiş tikler atlanır, birikmez.
-    - `max_consecutive_errors` kadar art arda hata olursa source.recover() çağrılır.
-    - Bir tüketicinin hatası diğerlerini ve döngüyü durdurmaz.
+    - Runs at a fixed rhythm; if a capture takes longer than the interval, late ticks are skipped,
+      they do not pile up.
+    - After `max_consecutive_errors` errors in a row, source.recover() is called.
+    - An error in one consumer does not stop the others or the loop.
     """
 
     def __init__(self, source: FrameSource, interval: float = 1.0,
                  consumers: Iterable[FrameConsumer] = (), crop: Optional[Region] = None,
                  max_consecutive_errors: int = 3, retry_delay: float = 2.0):
         if interval < 0:
-            raise ValueError("interval negatif olamaz")
+            raise ValueError(tr("interval cannot be negative"))
         self._source = source
         self._interval = interval
         self._crop = crop
@@ -50,7 +52,7 @@ class PeriodicCapturer:
         self._thread: Optional[threading.Thread] = None
         self._stats = CaptureStats()
 
-    # ---- abonelik -------------------------------------------------------- #
+    # ---- subscription ---------------------------------------------------- #
     def subscribe(self, consumer: FrameConsumer) -> None:
         with self._lock:
             self._consumers.append(consumer)
@@ -59,7 +61,7 @@ class PeriodicCapturer:
         with self._lock:
             self._consumers.remove(consumer)
 
-    # ---- yaşam döngüsü --------------------------------------------------- #
+    # ---- lifecycle ------------------------------------------------------- #
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -77,7 +79,7 @@ class PeriodicCapturer:
             c.on_start()
         self._thread = threading.Thread(target=self._run, name="PeriodicCapturer", daemon=True)
         self._thread.start()
-        log.info("Yakalama başladı: %s, her %.2f sn", self._source.name, self._interval)
+        log.info(tr("Capture started: %s, every %.2f s"), self._source.name, self._interval)
 
     def stop(self, timeout: float = 5.0) -> None:
         self._stop_event.set()
@@ -87,7 +89,7 @@ class PeriodicCapturer:
         for c in self._snapshot():
             self._safe(c.on_stop)
         self._source.close()
-        log.info("Yakalama durdu. %s", self._stats)
+        log.info(tr("Capture stopped. %s"), self._stats)
 
     def __enter__(self) -> "PeriodicCapturer":
         self.start()
@@ -96,7 +98,7 @@ class PeriodicCapturer:
     def __exit__(self, *exc) -> None:
         self.stop()
 
-    # ---- döngü ----------------------------------------------------------- #
+    # ---- loop ------------------------------------------------------------ #
     def _run(self) -> None:
         index = 0
         consecutive_errors = 0
@@ -110,7 +112,7 @@ class PeriodicCapturer:
             except CaptureError as e:
                 consecutive_errors += 1
                 self._stats = replace(self._stats, errors=self._stats.errors + 1, last_error=str(e))
-                log.warning("Yakalama hatası (%d/%d): %s", consecutive_errors, self._max_errors, e)
+                log.warning(tr("Capture error (%d/%d): %s"), consecutive_errors, self._max_errors, e)
                 if consecutive_errors >= self._max_errors:
                     consecutive_errors = self._try_recover()
                 if self._stop_event.wait(self._retry_delay):
@@ -127,7 +129,7 @@ class PeriodicCapturer:
             index += 1
             self._dispatch(frame)
 
-            # istatistik
+            # statistics
             fps_count += 1
             now = time.monotonic()
             n = self._stats.frames + 1
@@ -137,7 +139,7 @@ class PeriodicCapturer:
                 fps, fps_count, fps_t0 = fps_count / (now - fps_t0), 0, now
             self._stats = replace(self._stats, frames=n, avg_capture_ms=avg, fps=fps)
 
-            # sabit ritim: geciktiysek kaçırılan tikleri atla
+            # fixed rhythm: skip missed ticks if we are late
             next_tick += self._interval
             if next_tick < now:
                 next_tick = now
@@ -147,11 +149,11 @@ class PeriodicCapturer:
         try:
             self._source.recover()
             self._stats = replace(self._stats, recoveries=self._stats.recoveries + 1)
-            log.info("Kaynak toparlandı: %s", self._source.name)
+            log.info(tr("Source recovered: %s"), self._source.name)
             return 0
-        except Exception as e:  # noqa: BLE001 — toparlanma hatası döngüyü öldürmemeli
-            log.error("Toparlanma başarısız: %s", e)
-            return 0  # sayacı sıfırla; bir sonraki hata serisinde tekrar dener
+        except Exception as e:  # noqa: BLE001 — a recovery error must not kill the loop
+            log.error(tr("Recovery failed: %s"), e)
+            return 0  # reset the counter; retry on the next error series
 
     def _dispatch(self, frame: Frame) -> None:
         for c in self._snapshot():
@@ -166,4 +168,4 @@ class PeriodicCapturer:
         try:
             fn(*args)
         except Exception:  # noqa: BLE001
-            log.exception("Tüketici hatası: %r", fn)
+            log.exception(tr("Consumer error: %r"), fn)

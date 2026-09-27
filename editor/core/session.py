@@ -1,4 +1,4 @@
-"""Script'i ayrı bir süreçte çalıştırır; debug modunda agent ile TCP üzerinden konuşur."""
+"""Runs the script in a separate process; in debug mode talks to the agent over TCP."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ from typing import Dict, List, Optional
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
 from PySide6.QtNetwork import QHostAddress, QTcpServer, QTcpSocket
 
+from .. import i18n
+from ..i18n import tr
 from .project import Project
 from .protocol import Command, Event, LineDecoder, encode
 
@@ -35,7 +37,7 @@ class LaunchRequest:
 
 class ScriptSession(QObject):
     state_changed = Signal(object)     # SessionState
-    output = Signal(str, str)          # metin, tür (out | sys | err)
+    output = Signal(str, str)          # text, kind (out | sys | err)
     started = Signal(str, bool)
     finished = Signal(int)
     paused = Signal(dict)
@@ -57,7 +59,7 @@ class ScriptSession(QObject):
         self._config_file: Optional[str] = None
         self._eval_id = 0
 
-    # ---- durum ----------------------------------------------------------- #
+    # ---- state ----------------------------------------------------------- #
     @property
     def state(self) -> SessionState:
         return self._state
@@ -75,15 +77,15 @@ class ScriptSession(QObject):
             self._state = state
             self.state_changed.emit(state)
 
-    # ---- başlat / durdur ------------------------------------------------- #
+    # ---- start / stop ---------------------------------------------------- #
     def start(self, request: LaunchRequest) -> None:
         if self.is_active:
-            raise RuntimeError("Zaten çalışan bir script var")
+            raise RuntimeError(tr("There is already a running script"))
         self._request = request
         self._decoder = LineDecoder()
         self._text_decoder.reset()
 
-        # Kaydedilmemiş ayarlar da kullanılsın diye config geçici dosyaya yazılır
+        # the config is written to a temp file so unsaved settings are used as well
         fd, self._config_file = tempfile.mkstemp(prefix="screenscript_", suffix=".json")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(request.project.config.to_dict(), f)
@@ -94,7 +96,7 @@ class ScriptSession(QObject):
             self._server = QTcpServer(self)
             self._server.newConnection.connect(self._on_connection)
             if not self._server.listen(QHostAddress.LocalHost, 0):
-                raise RuntimeError(f"Debug sunucusu açılamadı: {self._server.errorString()}")
+                raise RuntimeError(tr("Debug server could not be opened: {error}", error=self._server.errorString()))
             args += ["--debug-port", str(self._server.serverPort())]
 
         proc = QProcess(self)
@@ -107,13 +109,14 @@ class ScriptSession(QObject):
         env.insert("PYTHONPATH", os.pathsep.join(paths))
         env.insert("PYTHONUNBUFFERED", "1")
         env.insert("PYTHONIOENCODING", "utf-8")
+        env.insert(i18n.ENV_VAR, i18n.language())   # the script process logs in the editor's language
         proc.setProcessEnvironment(env)
         proc.readyReadStandardOutput.connect(self._on_stdout)
         proc.finished.connect(self._on_finished)
         proc.errorOccurred.connect(self._on_error)
         self._proc = proc
 
-        mode = "Debug" if request.debug else "Çalıştır"
+        mode = tr("Debug") if request.debug else tr("Run")
         self.output.emit(f"▶ {mode}: {request.project.relative(request.script)}\n", "sys")
         self._set_state(SessionState.RUNNING)
         proc.start(self._python, args)
@@ -132,7 +135,7 @@ class ScriptSession(QObject):
         if self._proc and self._proc.state() != QProcess.NotRunning:
             self._proc.kill()
 
-    # ---- debug komutları ------------------------------------------------- #
+    # ---- debug commands -------------------------------------------------- #
     def continue_(self):
         self._resume(Command.CONTINUE)
 
@@ -171,7 +174,7 @@ class ScriptSession(QObject):
             self._socket.write(encode(kind, **payload))
             self._socket.flush()
 
-    # ---- süreç olayları -------------------------------------------------- #
+    # ---- process events -------------------------------------------------- #
     def _on_stdout(self) -> None:
         data = bytes(self._proc.readAllStandardOutput())
         text = self._text_decoder.decode(data)
@@ -180,7 +183,7 @@ class ScriptSession(QObject):
 
     def _on_error(self, error) -> None:
         if error == QProcess.FailedToStart:
-            self.output.emit(f"Python başlatılamadı: {self._python}\n", "err")
+            self.output.emit(tr("Python could not be started: {python}\n", python=self._python), "err")
             self._on_finished(-1, None)
 
     def _on_finished(self, code, _status) -> None:
@@ -189,7 +192,7 @@ class ScriptSession(QObject):
         tail = self._text_decoder.decode(b"", final=True)
         if tail:
             self.output.emit(tail, "out")
-        self.output.emit(f"■ Bitti (çıkış kodu {code})\n\n", "sys")
+        self.output.emit(tr("■ Finished (exit code {code})\n\n", code=code), "sys")
         self._cleanup()
         self._set_state(SessionState.IDLE)
         self.finished.emit(int(code))
@@ -213,7 +216,7 @@ class ScriptSession(QObject):
                 pass
         self._config_file = None
 
-    # ---- debug soketi ---------------------------------------------------- #
+    # ---- debug socket ---------------------------------------------------- #
     def _on_connection(self) -> None:
         sock = self._server.nextPendingConnection()
         if self._socket is not None:

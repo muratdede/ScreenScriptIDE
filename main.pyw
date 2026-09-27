@@ -1,8 +1,8 @@
-"""ScreenScript IDE — uygulamanın tek giriş noktası.
+"""ScreenScript IDE — the single entry point of the application.
 
     pip install -r requirements.txt
-    python main.py                  # son projeyi açar
-    python main.py proje_klasoru    # belirli bir klasörü proje olarak açar
+    python main.pyw                  # opens the last project
+    python main.pyw project_folder   # opens a specific folder as the project
 """
 
 import sys

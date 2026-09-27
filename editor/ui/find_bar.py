@@ -1,6 +1,6 @@
-"""Editör içi bul / değiştir çubuğu (Ctrl+F / Ctrl+R), IntelliJ'deki gibi editörün üst kenarına yerleşir.
+"""In-editor find / replace bar (Ctrl+F / Ctrl+R), placed at the top edge of the editor like in IntelliJ.
 
-Arama mantığı CodeEditor'dadır (find_* metotları); bu sınıf yalnızca arayüzdür.
+The search logic is in CodeEditor (find_* methods); this class is only the UI.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QToolButton, QVBoxLayout, QWidget
 
 from ..core.search import SearchQuery
+from ..i18n import ntr, tr
 from . import icons
 from .shortcuts import shortcut
 
@@ -56,25 +57,25 @@ class FindBar(QWidget):
         root.setContentsMargins(6, 4, 8, 4)
         root.setSpacing(4)
 
-        # ---- 1. satır: ara ----------------------------------------------- #
+        # ---- row 1: find ------------------------------------------------ #
         row = QHBoxLayout()
         row.setSpacing(3)
         self._expand = QToolButton()
         self._expand.setFixedSize(22, 22)
-        self._expand.setToolTip("Değiştir'i aç/kapat (Ctrl+R)")
+        self._expand.setToolTip(tr("Toggle replace (Ctrl+R)"))
         self._expand.clicked.connect(lambda: self.set_replace_mode(not self.replace_mode))
         row.addWidget(self._expand)
 
         self.find_edit = QLineEdit()
-        self.find_edit.setPlaceholderText("Bul")
+        self.find_edit.setPlaceholderText(tr("Find"))
         self.find_edit.addAction(icons.icon("search", "#868a91", 14), QLineEdit.LeadingPosition)
         self.find_edit.setMinimumWidth(260)
         self.find_edit.textChanged.connect(self._schedule)
         row.addWidget(self.find_edit, 1)
 
-        self.case_btn = _toggle("Cc", "Büyük/küçük harf duyarlı (Alt+C)")
-        self.word_btn = _toggle("W", "Tam kelime (Alt+W)")
-        self.regex_btn = _toggle(".*", "Düzenli ifade / regex (Alt+X)")
+        self.case_btn = _toggle("Cc", tr("Match case (Alt+C)"))
+        self.word_btn = _toggle("W", tr("Whole words (Alt+W)"))
+        self.regex_btn = _toggle(".*", tr("Regular expression (Alt+X)"))
         for b, key in ((self.case_btn, "Alt+C"), (self.word_btn, "Alt+W"), (self.regex_btn, "Alt+X")):
             b.toggled.connect(self._schedule)
             row.addWidget(b)
@@ -85,29 +86,29 @@ class FindBar(QWidget):
         self.count_label.setMinimumWidth(92)
         self.count_label.setAlignment(Qt.AlignCenter)
         row.addWidget(self.count_label)
-        row.addWidget(_icon_button("chevron_up", "Önceki (Shift+Enter / Shift+F3)", editor.find_previous))
-        row.addWidget(_icon_button("chevron_down", "Sonraki (Enter / F3)", editor.find_next))
+        row.addWidget(_icon_button("chevron_up", tr("Previous (Shift+Enter / Shift+F3)"), editor.find_previous))
+        row.addWidget(_icon_button("chevron_down", tr("Next (Enter / F3)"), editor.find_next))
         row.addStretch()
-        row.addWidget(_icon_button("close", "Kapat (Esc)", editor.hide_find))
+        row.addWidget(_icon_button("close", tr("Close (Esc)"), editor.hide_find))
         root.addLayout(row)
 
-        # ---- 2. satır: değiştir ------------------------------------------ #
+        # ---- row 2: replace -------------------------------------------- #
         self._replace_row = QWidget()
         rrow = QHBoxLayout(self._replace_row)
         rrow.setContentsMargins(25, 0, 0, 0)
         rrow.setSpacing(3)
         self.replace_edit = QLineEdit()
-        self.replace_edit.setPlaceholderText("Değiştir" + " (regex: \\1 grupları)")
+        self.replace_edit.setPlaceholderText(tr("Replace (regex: \\1 groups)"))
         self.replace_edit.addAction(icons.icon("refresh", "#868a91", 14), QLineEdit.LeadingPosition)
         self.replace_edit.setMinimumWidth(260)
         rrow.addWidget(self.replace_edit, 1)
-        rep = QToolButton(text="Değiştir")
+        rep = QToolButton(text=tr("Replace"))
         rep.setObjectName("text_btn")
-        rep.setToolTip("Seçili eşleşmeyi değiştir ve sonrakine geç (Enter)")
+        rep.setToolTip(tr("Replace the selected match and go to the next (Enter)"))
         rep.clicked.connect(editor.replace_current)
-        rep_all = QToolButton(text="Tümünü Değiştir")
+        rep_all = QToolButton(text=tr("Replace All"))
         rep_all.setObjectName("text_btn")
-        rep_all.setToolTip("Tüm eşleşmeleri değiştir (Ctrl+Alt+Enter)")
+        rep_all.setToolTip(tr("Replace all matches (Ctrl+Alt+Enter)"))
         rep_all.clicked.connect(editor.replace_all)
         rrow.addWidget(rep)
         rrow.addWidget(rep_all)
@@ -118,7 +119,7 @@ class FindBar(QWidget):
         self._timer.timeout.connect(lambda: editor.find_update(select=True))
 
         sc = lambda key, slot: shortcut(key, self, slot, Qt.WidgetWithChildrenShortcut)
-        sc("Escape", editor.hide_find)            # F3 / Shift+F3 ana penceredeki eylemlerdir
+        sc("Escape", editor.hide_find)            # F3 / Shift+F3 are actions of the main window
         sc("Ctrl+Alt+Return", editor.replace_all)
         self.find_edit.returnPressed.connect(editor.find_next)
         self.replace_edit.returnPressed.connect(editor.replace_current)
@@ -127,7 +128,7 @@ class FindBar(QWidget):
         self.replace_mode = False
         self.set_replace_mode(False)
 
-    # ---- durum ----------------------------------------------------------- #
+    # ---- state ----------------------------------------------------------- #
     def set_replace_mode(self, on: bool) -> None:
         self.replace_mode = on
         self._replace_row.setVisible(on)
@@ -153,10 +154,10 @@ class FindBar(QWidget):
         elif not self.find_edit.text():
             self.count_label.setText("")
         elif total == 0:
-            self.count_label.setText("Sonuç yok")
+            self.count_label.setText(tr("No results"))
             self.count_label.setStyleSheet("color: #db5c5c;")
         else:
-            self.count_label.setText(f"{current}/{total}" if current else f"{total} sonuç")
+            self.count_label.setText(f"{current}/{total}" if current else ntr("{n} result", "{n} results", total))
             self.count_label.setStyleSheet("")
 
     def _schedule(self, *_):

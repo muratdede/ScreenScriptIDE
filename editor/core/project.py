@@ -1,4 +1,4 @@
-"""Proje: bir klasör + .screenscript.json ayar dosyası. Qt bağımlılığı yoktur."""
+"""Project: a folder + the .screenscript.json settings file. No Qt dependency."""
 
 from __future__ import annotations
 
@@ -7,44 +7,48 @@ import os
 from dataclasses import asdict, dataclass, field, fields
 from typing import Dict, List, Optional
 
-SCRIPT_TEMPLATE = '''"""
+from ..i18n import N_, tr
+
+# content of a new script file; translated when the file is created
+SCRIPT_TEMPLATE = N_('''"""
 {name}
 
-Hazır isimler: SCREEN, Pattern, Region, Location, Key, find, exists, wait, click, ...
-Ctrl+Space ile tamamlama listesini açabilirsiniz.
+Ready-made names: SCREEN, Pattern, Region, Location, Key, find, exists, wait, click, ...
+Press Ctrl+Space to open the completion list.
 """
 
-# Sadece ekranın sol üst çeyreğinde ara:
-# alan = Region(0, 0, SCREEN.w // 2, SCREEN.h // 2)
-# m = alan.exists(Pattern("button.png").similar(0.85), timeout=5)
+# Search only in the top-left quarter of the screen:
+# area = Region(0, 0, SCREEN.w // 2, SCREEN.h // 2)
+# m = area.exists(Pattern("button.png").similar(0.85), timeout=5)
 # if m:
 #     click(m)
 
-log("Merhaba! Ekran: %dx%d" % (SCREEN.w, SCREEN.h))
-'''
+log("Hello! Screen: %dx%d" % (SCREEN.w, SCREEN.h))
+''')
 
 
 @dataclass
 class ProjectConfig:
-    """Projeye özgü çalışma ayarları. Yeni alan eklemek geriye dönük uyumludur."""
+    """Project specific run settings. Adding new fields is backwards compatible."""
 
     similarity: float = 0.7
     timeout: float = 3.0
     scan_rate: float = 3.0
-    # Çoklu ölçekli arama her zaman açıktır; sadece denenecek ölçekler ayarlanır.
-    # (Eski projelerdeki "multiscale" ve kaldırılan "dry_run" anahtarları from_dict'te yok sayılır.)
+    # Multi-scale search is always on; only the scales to try are configured.
+    # (The "multiscale" and removed "dry_run" keys of old projects are ignored in from_dict.)
     scales: List[float] = field(default_factory=lambda: [0.8, 0.9, 1.0, 1.1, 1.2])
     grayscale: bool = False
     humanize: bool = False
-    tap_ms: int = 0                  # dokunuş basılı kalma süresi (ms); 0 = anlık "input tap"
+    tap_ms: int = 0                  # how long a tap is held down (ms); 0 = instant "input tap"
     save_on_fail: bool = True
-    log_level: str = "INFO"          # script çıktısındaki log seviyesi: DEBUG, INFO, WARNING, ERROR
-    ocr: str = "auto"                # metin okuma motoru: auto, rapid, windows
+    log_level: str = "INFO"          # log level of the script output: DEBUG, INFO, WARNING, ERROR
+    ocr: str = "auto"                # text recognition engine: auto, rapid, windows
     main_script: str = "main.py"
     script_args: Dict[str, str] = field(default_factory=dict)
     image_dirs: List[str] = field(default_factory=lambda: ["images"])
-    # Not: cihaz bağlantısı (host, port, adb_path, screencap_format, background) ve Telegram ayarları proje değil
-    # uygulama ayarıdır (core/app_settings.AppConfig). Eski projelerdeki bu anahtarlar açılışta taşınır.
+    # Note: the device connection (host, port, adb_path, screencap_format, background) and the Telegram
+    # settings are application settings, not project settings (core/app_settings.AppConfig). These keys
+    # in old projects are migrated on open.
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -58,7 +62,7 @@ class ProjectConfig:
 
     @staticmethod
     def normalize_scales(scales) -> List[float]:
-        """Geçersizleri atar, 1.0'ı her zaman içerir, sıralar."""
+        """Drops invalid values, always contains 1.0, sorted."""
         out = set()
         for s in scales or []:
             try:
@@ -79,12 +83,12 @@ class Project:
         self._root = os.path.abspath(root)
         self.config = config or ProjectConfig()
 
-    # ---- oluşturma / yükleme -------------------------------------------- #
+    # ---- create / load --------------------------------------------------- #
     @classmethod
     def open(cls, root: str) -> "Project":
         root = os.path.abspath(root)
         if not os.path.isdir(root):
-            raise FileNotFoundError(f"Klasör yok: {root}")
+            raise FileNotFoundError(tr("Folder does not exist: {path}", path=root))
         path = os.path.join(root, cls.CONFIG_FILE)
         config = ProjectConfig()
         raw = None
@@ -93,7 +97,7 @@ class Project:
                 raw = json.load(f)
             config = ProjectConfig.from_dict(raw)
         project = cls(root, config)
-        # eski sürümlerin proje klasöründe bıraktığı gizli bilgileri uygulama klasörüne taşı
+        # move secrets left in the project folder by older versions to the application folder
         from .app_settings import migrate_project
         if migrate_project(root, raw or {}):
             project.save()
@@ -101,7 +105,7 @@ class Project:
         return project
 
     def ensure_layout(self) -> None:
-        """Eksikse images/ klasörünü, ayar dosyasını ve ana script'i oluşturur."""
+        """Creates the images/ folder, the settings file and the main script if missing."""
         os.makedirs(self.images_dir, exist_ok=True)
         if not os.path.isfile(self.config_path):
             self.save()
@@ -113,7 +117,7 @@ class Project:
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(self.config.to_dict(), f, indent=2, ensure_ascii=False)
 
-    # ---- yollar ---------------------------------------------------------- #
+    # ---- paths ----------------------------------------------------------- #
     @property
     def root(self) -> str:
         return self._root
@@ -140,7 +144,7 @@ class Project:
     def relative(self, path: str) -> str:
         try:
             return os.path.relpath(path, self._root)
-        except ValueError:  # farklı sürücü (Windows)
+        except ValueError:  # different drive (Windows)
             return path
 
     def contains(self, path: str) -> bool:
@@ -151,7 +155,7 @@ class Project:
         return [self.resolve(d) for d in self.config.image_dirs]
 
     def find_image(self, name: str, script_dir: str = "") -> Optional[str]:
-        """Koddaki görsel adını dosyaya çevirir (proje kökü, script klasörü, görsel klasörleri)."""
+        """Maps an image name in code to a file (project root, script folder, image folders)."""
         candidates = [os.path.join(self._root, name)]
         if script_dir:
             candidates += [os.path.join(script_dir, name), os.path.join(script_dir, "images", name)]
@@ -161,7 +165,7 @@ class Project:
                 return os.path.abspath(c)
         return None
 
-    # ---- dosya işlemleri ------------------------------------------------- #
+    # ---- file operations ------------------------------------------------- #
     def create_script(self, name: str, directory: Optional[str] = None) -> str:
         if not name.endswith(".py"):
             name += ".py"
@@ -169,14 +173,14 @@ class Project:
         if os.path.exists(path):
             raise FileExistsError(path)
         with open(path, "w", encoding="utf-8") as f:
-            f.write(SCRIPT_TEMPLATE.format(name=os.path.splitext(name)[0]))
+            f.write(tr(SCRIPT_TEMPLATE, name=os.path.splitext(name)[0]))
         return path
 
     IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp")
 
     def list_images(self) -> List[str]:
-        """Görsel klasörlerindeki + proje kökündeki görseller (script çalışırken bunların hepsi
-        adıyla bulunabilir)."""
+        """Images in the image folders + the project root (all of them can be found by name while
+        a script runs)."""
         out: List[str] = []
         seen = set()
         for d in self.image_search_dirs() + [self._root]:

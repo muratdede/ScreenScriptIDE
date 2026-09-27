@@ -1,4 +1,4 @@
-"""Görsel eşleştirme algoritmaları. Yeni algoritma = Matcher'dan türetilmiş yeni sınıf."""
+"""Image matching algorithms. New algorithm = new class derived from Matcher."""
 
 from __future__ import annotations
 
@@ -9,36 +9,37 @@ from typing import Iterable, List, Optional
 import cv2
 import numpy as np
 
+from ...i18n import tr
 from .geometry import Rect
 
 
 @dataclass(frozen=True)
 class MatchResult:
-    rect: Rect      # haystack (aranan görüntü) koordinatlarında
-    score: float    # 0..1, yüksek = daha benzer
+    rect: Rect      # in haystack (searched image) coordinates
+    score: float    # 0..1, higher = more similar
 
 
 class Matcher(ABC):
-    """Bir görüntü (haystack) içinde başka bir görüntüyü (needle) arar."""
+    """Searches an image (needle) inside another image (haystack)."""
 
     @abstractmethod
     def best(self, haystack: np.ndarray, needle: np.ndarray) -> Optional[MatchResult]:
-        """Eşik gözetmeksizin en iyi eşleşme. needle haystack'ten büyükse None."""
+        """Best match regardless of the threshold. None if the needle is larger than the haystack."""
 
     @abstractmethod
     def find_all(self, haystack: np.ndarray, needle: np.ndarray,
                  min_score: float, max_results: int = 100) -> List[MatchResult]:
-        """min_score üstündeki, birbiriyle çakışmayan eşleşmeler (skora göre azalan)."""
+        """Non-overlapping matches above min_score (descending by score)."""
 
 
 class TemplateMatcher(Matcher):
-    """OpenCV matchTemplate (TM_CCOEFF_NORMED). Hızlı; ölçek ve dönmeye duyarlı."""
+    """OpenCV matchTemplate (TM_CCOEFF_NORMED). Fast; sensitive to scale and rotation."""
 
     SUPPORTED = (cv2.TM_CCOEFF_NORMED, cv2.TM_CCORR_NORMED)
 
     def __init__(self, method: int = cv2.TM_CCOEFF_NORMED, grayscale: bool = False):
         if method not in self.SUPPORTED:
-            raise ValueError("Sadece TM_CCOEFF_NORMED ve TM_CCORR_NORMED desteklenir")
+            raise ValueError(tr("Only TM_CCOEFF_NORMED and TM_CCORR_NORMED are supported"))
         self._method = method
         self._gray = grayscale
 
@@ -61,7 +62,7 @@ class TemplateMatcher(Matcher):
             if max_val < min_score:
                 break
             results.append(MatchResult(Rect(x, y, w, h), float(max_val)))
-            # bulunan yerin çevresini bastır ki aynı nesne tekrar bulunmasın
+            # suppress the area around the hit so the same object is not found again
             x0, y0 = max(0, x - w // 2), max(0, y - h // 2)
             scores[y0:y + h // 2 + 1, x0:x + w // 2 + 1] = -1.0
         return results
@@ -73,13 +74,13 @@ class TemplateMatcher(Matcher):
             haystack = cv2.cvtColor(haystack, cv2.COLOR_BGR2GRAY)
             needle = cv2.cvtColor(needle, cv2.COLOR_BGR2GRAY)
         scores = cv2.matchTemplate(haystack, needle, self._method)
-        # tek renkli şablonlarda NaN/inf oluşabilir
+        # single-color templates may produce NaN/inf
         return np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
 
 
 class MultiScaleMatcher(Matcher):
-    """Başka bir Matcher'ı birden fazla ölçekte çalıştırır (Decorator).
-    Emülatör çözünürlüğü, şablonun alındığı çözünürlükten farklıysa işe yarar."""
+    """Runs another Matcher at multiple scales (Decorator).
+    Useful when the emulator resolution differs from the resolution the template was taken at."""
 
     def __init__(self, inner: Matcher, scales: Iterable[float] = (0.8, 0.9, 1.0, 1.1, 1.2)):
         self._inner = inner

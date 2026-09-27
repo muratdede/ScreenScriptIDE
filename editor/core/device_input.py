@@ -1,7 +1,7 @@
-"""Editörden cihaza girdi gönderme (Ekran view'ındaki "Tıklayıcı" modu).
+"""Sending input from the editor to the device ("Clicker" mode of the Screen view).
 
-Komutlar tek bir arka plan thread'inde sırayla çalışır: UI hiç beklemez ve dokunmalar
-gönderildikleri sırayla cihaza ulaşır.
+Commands run in order on a single background thread: the UI never waits and touches reach the
+device in the order they were sent.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Callable, Optional, Tuple
 
 from PySide6.QtCore import QObject, Signal
 
+from ..i18n import tr
 from ..plugins.adb_capture import AdbDevice
 from ..plugins.screenscript import AdbInputDriver, Location
 
@@ -20,7 +21,7 @@ from .app_settings import AppConfig
 
 class DeviceInput(QObject):
     failed = Signal(str)
-    sent = Signal(str)   # gönderilen komutun kısa açıklaması
+    sent = Signal(str)   # short description of the sent command
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -29,7 +30,7 @@ class DeviceInput(QObject):
         self._key: Optional[Tuple] = None
         threading.Thread(target=self._worker, daemon=True).start()
 
-    # ---- komutlar -------------------------------------------------------- #
+    # ---- commands -------------------------------------------------------- #
     def tap(self, config: AppConfig, x: int, y: int) -> None:
         self._put(config, f"tap {x},{y}", lambda d: d.tap(Location(x, y)))
 
@@ -38,16 +39,16 @@ class DeviceInput(QObject):
                   lambda d: d.swipe(Location(x1, y1), Location(x2, y2), max(1, duration_ms)))
 
     def long_press(self, config: AppConfig, x: int, y: int, duration_ms: int) -> None:
-        self._put(config, f"uzun bas {x},{y} ({duration_ms} ms)",
+        self._put(config, tr("long press {x},{y} ({ms} ms)", x=x, y=y, ms=duration_ms),
                   lambda d: d.long_press(Location(x, y), duration_ms))
 
     def text(self, config: AppConfig, text: str) -> None:
-        self._put(config, f"yazı {text!r}", lambda d: d.type_text(text))
+        self._put(config, tr("text {text!r}", text=text), lambda d: d.type_text(text))
 
     def key(self, config: AppConfig, keycode: int, label: str = "") -> None:
-        self._put(config, f"tuş {label or keycode}", lambda d: d.key(keycode))
+        self._put(config, tr("key {key}", key=label or keycode), lambda d: d.key(keycode))
 
-    # ---- iç -------------------------------------------------------------- #
+    # ---- internal -------------------------------------------------------- #
     def _put(self, config: AppConfig, label: str, job: Callable[[AdbInputDriver], None]) -> None:
         self._queue.put((config, label, job))
 

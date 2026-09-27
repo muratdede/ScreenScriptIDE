@@ -1,4 +1,4 @@
-"""ADB üzerinden periyodik ekran yakalama."""
+"""Periodic screen capture over ADB."""
 
 from .adb import AdbDevice, AdbError, AdbLocator
 from .capturer import CaptureStats, PeriodicCapturer

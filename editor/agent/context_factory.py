@@ -1,5 +1,5 @@
-"""ProjectConfig + AppConfig (cihaz bağlantısı, bildirim) -> screenscript.ScriptContext.
-Ana kodu sadece public API'si üzerinden kullanır."""
+"""ProjectConfig + AppConfig (device connection, notifications) -> screenscript.ScriptContext.
+Uses the main code only through its public API."""
 
 from __future__ import annotations
 
@@ -14,8 +14,8 @@ from ..core.project import Project, ProjectConfig
 
 
 class ContextFactory:
-    """Proje ayarlarından script bağlamı kurar. Farklı bir kurulum için alt sınıfta
-    create_builder/configure_* metotlarını ezmeniz yeterli."""
+    """Builds the script context from the project settings. For a different setup, override
+    create_builder/configure_* in a subclass."""
 
     def __init__(self, project: Project, app: Optional[AppConfig] = None):
         self._project = project
@@ -47,8 +47,8 @@ class ContextFactory:
 
     @staticmethod
     def create_matcher(config) -> MultiScaleMatcher:
-        """Projeler her zaman çoklu ölçekte tarar. Editördeki eşleşme testi de bunu kullanır,
-        böylece test sonucu ile script sonucu birebir aynıdır."""
+        """Projects always scan at multiple scales. The match test in the editor uses this too,
+        so the test result is identical to the script result."""
         return MultiScaleMatcher(TemplateMatcher(grayscale=config.grayscale),
                                  scales=ProjectConfig.normalize_scales(config.scales))
 
@@ -57,8 +57,8 @@ class ContextFactory:
             builder.with_input_decorator(HumanizedInputDriver)
 
     def configure_notifier(self, builder: ContextBuilder) -> None:
-        """Token ve kullanıcı adı varsa push_notification Telegram'a gider; yoksa script
-        push_notification çağırdığında NotificationError alır."""
+        """If a token and username are set, push_notification goes to Telegram; otherwise the script
+        gets a NotificationError when it calls push_notification."""
         app = self._app
         token = app.effective_telegram_token()
         if token and app.telegram_username.strip():

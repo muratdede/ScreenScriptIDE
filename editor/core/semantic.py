@@ -1,8 +1,8 @@
-"""Anlamsal renklendirme: isimlerin ne olduğuna (sınıf, fonksiyon, parametre, modül) göre sınıflandırılması.
+"""Semantic highlighting: classifying names by what they are (class, function, parameter, module).
 
-Sözdizimi renklendiricisi yalnızca kelimelere bakar; burada ast üzerinden kullanıcının tanımladığı
-sınıflar/fonksiyonlar, importlanan modüller, fonksiyon parametreleri ve çağrılan her şey bulunur.
-Qt bağımsızdır; sonuç satır -> [(başlangıç, bitiş, isim, tür)] sözlüğüdür (sütunlar Python str indeksi).
+The syntax highlighter only looks at words; here, via ast, the classes/functions defined by the user,
+imported modules, function parameters and everything that is called are found.
+Qt-independent; the result is a dict line -> [(start, end, name, kind)] (columns are Python str indexes).
 """
 
 from __future__ import annotations
@@ -18,17 +18,17 @@ FUNCTION = "function"
 PARAMETER = "parameter"
 MODULE = "module"
 
-Token = Tuple[int, int, str, str]          # başlangıç, bitiş, isim, tür
+Token = Tuple[int, int, str, str]          # start, end, name, kind
 Tokens = Dict[int, List[Token]]
 
 
 def _is_class_name(name: str) -> bool:
-    """PascalCase isimler (ALL_CAPS sabitler hariç) sınıf kabul edilir."""
+    """PascalCase names (except ALL_CAPS constants) are considered classes."""
     return name[:1].isupper() and not name.isupper() and any(c.islower() for c in name)
 
 
 def _locals(func) -> Set[str]:
-    """Fonksiyonun kendi kapsamında atanan isimler (iç fonksiyonlar hariç)."""
+    """Names assigned in the function's own scope (excluding inner functions)."""
     out: Set[str] = set()
     stack = list(ast.iter_child_nodes(func))
     while stack:
@@ -61,11 +61,11 @@ class _Collector(ast.NodeVisitor):
         self.lines = lines
         self.api = api
         self.tokens: Tokens = {}
-        self.kinds: Dict[str, str] = {}   # dosya genelinde tanımlı isimler
+        self.kinds: Dict[str, str] = {}   # names defined file-wide
         self.scopes: List[_Scope] = []
-        self.called: Set[int] = set()     # çağrılan Name/Attribute düğümlerinin id'leri
+        self.called: Set[int] = set()     # ids of called Name/Attribute nodes
 
-    # ---- kayıt ----------------------------------------------------------- #
+    # ---- recording ------------------------------------------------------- #
     def emit(self, line: int, col: int, name: str, kind: str):
         if 0 < line <= len(self.lines) and self.lines[line - 1][col:col + len(name)] == name:
             self.tokens.setdefault(line, []).append((col, col + len(name), name, kind))
@@ -79,7 +79,7 @@ class _Collector(ast.NodeVisitor):
         end = char_col(lt, node.end_col_offset)
         self.emit(node.end_lineno, end - len(node.attr), node.attr, kind)
 
-    # ---- tanımlar -------------------------------------------------------- #
+    # ---- definitions ----------------------------------------------------- #
     def collect(self, tree: ast.Module):
         for node in ast.walk(tree):
             if isinstance(node, ast.ClassDef):
@@ -98,14 +98,14 @@ class _Collector(ast.NodeVisitor):
     def kind_of(self, name: str) -> Optional[str]:
         for scope in reversed(self.scopes):
             if name in scope.params:
-                return PARAMETER if name != "self" else None   # self'in kendi rengi var
+                return PARAMETER if name != "self" else None   # self has its own color
             if name in scope.locals:
-                return None                                    # yerel değişken
+                return None                                    # local variable
         if name in self.api or (name in BUILTIN_NAMES and name not in self.kinds):
-            return None   # API ve yerleşikler sözdizimi renklendiricisinde
+            return None   # API and builtins are in the syntax highlighter
         return self.kinds.get(name)
 
-    # ---- gezinme --------------------------------------------------------- #
+    # ---- traversal ------------------------------------------------------- #
     def visit_ClassDef(self, node: ast.ClassDef):
         for d in node.decorator_list:
             self.visit(d)
@@ -117,7 +117,7 @@ class _Collector(ast.NodeVisitor):
             elif isinstance(b, ast.Attribute) and _is_class_name(b.attr):
                 self.emit_attr(b, CLASS)
         outer = self.scopes
-        self.scopes = []   # sınıf gövdesi dış fonksiyonun yerellerini görmez gibi davran (yeterli yaklaşım)
+        self.scopes = []   # treat the class body as not seeing the outer function's locals (good enough approximation)
         for s in node.body:
             self.visit(s)
         self.scopes = outer
@@ -174,7 +174,7 @@ class _Collector(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call):
         self.called.add(id(node.func))
-        for kw in node.keywords:   # isimli argüman: f(zaman_asimi=3)
+        for kw in node.keywords:   # keyword argument: f(timeout=3)
             if kw.arg:
                 lt = self.lines[kw.lineno - 1] if 0 < kw.lineno <= len(self.lines) else ""
                 self.emit(kw.lineno, char_col(lt, kw.col_offset), kw.arg, PARAMETER)
@@ -184,7 +184,7 @@ class _Collector(ast.NodeVisitor):
         kind = self.kind_of(node.id)
         if kind is None and id(node) in self.called and not any(node.id in s.locals for s in self.scopes) \
                 and node.id not in self.api and node.id not in BUILTIN_NAMES:
-            kind = CLASS if _is_class_name(node.id) else FUNCTION   # başka yerden gelen çağrılabilir
+            kind = CLASS if _is_class_name(node.id) else FUNCTION   # a callable coming from elsewhere
         if kind:
             self.emit_node(node, node.id, kind)
 

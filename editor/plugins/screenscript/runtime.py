@@ -1,8 +1,8 @@
-"""Script çalıştırma ortamı.
+"""Script execution environment.
 
-ScriptContext : Engine + Screen'i tutar, script'e verilecek global isimleri üretir.
-ContextBuilder: Varsayılan bileşenlerle bir ScriptContext kurar; her bileşen değiştirilebilir.
-ScriptRunner  : Bir .py script dosyasını bu globallerle çalıştırır.
+ScriptContext : Holds Engine + Screen, produces the global names given to the script.
+ContextBuilder: Builds a ScriptContext with default components; every component can be replaced.
+ScriptRunner  : Runs a .py script file with these globals.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import traceback
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
+from ...i18n import tr
 from ..adb_capture import AdbDevice, FrameSource, ScreencapFormat, create_source
 
 from .engine import Engine
@@ -34,7 +35,7 @@ log = logging.getLogger("script")
 
 
 class ScriptContext:
-    """Bir script oturumu. Kaynakları açar/kapatır ve API isim alanını sağlar."""
+    """A script session. Opens/closes resources and provides the API namespace."""
 
     def __init__(self, engine: Engine, notifier: Optional[Notifier] = None):
         self.engine = engine
@@ -45,7 +46,7 @@ class ScriptContext:
     def open(self) -> "ScriptContext":
         self.engine.provider.open()
         self.screen = Screen(self.engine)
-        log.info("Ekran: %dx%d", self.screen.w, self.screen.h)
+        log.info(tr("Screen: %dx%d"), self.screen.w, self.screen.h)
         return self
 
     def close(self) -> None:
@@ -58,33 +59,33 @@ class ScriptContext:
         self.close()
 
     def register(self, name: str, obj: Any) -> None:
-        """Script'lere ek bir global isim ekler (ör. kendi yardımcı fonksiyonlarınız)."""
+        """Adds an extra global name for scripts (e.g. your own helper functions)."""
         self._extra[name] = obj
 
     def namespace(self, args: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        """Script'in göreceği global isimler."""
+        """Global names visible to the script."""
         s = self.screen
         if s is None:
-            raise ScriptError("Önce open() çağrılmalı")
+            raise ScriptError(tr("open() must be called first"))
         ns: Dict[str, Any] = {
-            # nesneler
+            # objects
             "SCREEN": s, "SETTINGS": self.engine.settings, "ARGS": dict(args or {}),
-            # tipler
+            # types
             "Pattern": Pattern, "Region": lambda x, y, w, h: Region(Rect(x, y, w, h), self.engine),
             "Location": Location, "Match": Match, "TextMatch": TextMatch, "Key": Key,
             "FindFailed": FindFailed, "ImageNotFound": ImageNotFound,
             "TextNotFound": TextNotFound, "OcrUnavailable": OcrUnavailable,
             "NotificationError": NotificationError,
-            # SCREEN kısayolları (SikuliX'teki gibi global fonksiyonlar)
+            # SCREEN shortcuts (global functions like in SikuliX)
             "find": s.find, "find_all": s.find_all, "exists": s.exists, "wait": s.wait,
             "wait_vanish": s.wait_vanish, "best_score": s.best_score,
             "click": s.click, "long_press": s.long_press, "drag_drop": s.drag_drop,
             "swipe": s.swipe, "type_text": s.type_text, "key": s.key,
             "highlight": s.highlight, "capture": s.capture,
-            # metin (OCR)
+            # text (OCR)
             "read_text": s.text, "read_lines": s.read_lines, "find_text": s.find_text,
             "exists_text": s.exists_text, "wait_text": s.wait_text,
-            # genel
+            # general
             "sleep": time.sleep, "log": log.info,
             "add_image_path": self.engine.library.image_path.add,
             "push_notification": self.notifier.send,
@@ -95,7 +96,7 @@ class ScriptContext:
 
 @dataclass
 class ContextBuilder:
-    """Varsayılan bileşenleri kurar. Değiştirmek istediğinizi with_* ile verin:
+    """Builds the default components. Pass whatever you want to replace with with_*:
 
         ctx = (ContextBuilder(port=5555)
                .with_matcher(MultiScaleMatcher(TemplateMatcher()))
@@ -109,7 +110,7 @@ class ContextBuilder:
     screencap_format: ScreencapFormat = ScreencapFormat.STREAM
     background: bool = False
     background_interval: float = 0.3
-    tap_ms: int = 0              # >0: dokunuşlar bu kadar ms basılı tutulur (doğal dokunuş)
+    tap_ms: int = 0              # >0: taps are held down this many ms (natural touch)
     settings: Settings = field(default_factory=Settings)
     image_dirs: list = field(default_factory=list)
 
@@ -146,7 +147,7 @@ class ContextBuilder:
         return self
 
     def with_text_reader(self, reader: TextReader) -> "ContextBuilder":
-        """Varsayılan: Settings.ocr_backend'e göre create_text_reader()."""
+        """Default: create_text_reader() based on Settings.ocr_backend."""
         self._text_reader = reader
         return self
 
@@ -181,7 +182,7 @@ class ContextBuilder:
 
 
 class ScriptRunner:
-    """Bir script dosyasını ScriptContext'in globalleriyle çalıştırır."""
+    """Runs a script file with the globals of a ScriptContext."""
 
     def __init__(self, context: ScriptContext):
         self._ctx = context
@@ -189,10 +190,10 @@ class ScriptRunner:
     def run(self, script_path: str, args: Optional[Dict[str, str]] = None) -> int:
         script_path = os.path.abspath(script_path)
         if not os.path.isfile(script_path):
-            log.error("Script bulunamadı: %s", script_path)
+            log.error(tr("Script not found: %s"), script_path)
             return 2
 
-        # Script'in yanındaki ve images/ klasöründeki görseller otomatik bulunsun
+        # images next to the script and in the images/ folder are found automatically
         script_dir = os.path.dirname(script_path)
         paths = self._ctx.engine.library.image_path
         for d in (script_dir, os.path.join(script_dir, "images"),
@@ -200,19 +201,19 @@ class ScriptRunner:
             if os.path.isdir(d):
                 paths.add(d)
 
-        log.info("Script başlıyor: %s", script_path)
+        log.info(tr("Script starting: %s"), script_path)
         started = time.monotonic()
         old_argv, old_path = sys.argv, list(sys.path)
         try:
             with self._ctx:
                 sys.argv = [script_path]
-                # Script yanındaki modül/paketler import edilebilsin (python script.py gibi)
+                # modules/packages next to the script can be imported (like python script.py)
                 sys.path.insert(0, script_dir)
                 runpy.run_path(script_path, init_globals=self._ctx.namespace(args), run_name="__main__")
-            log.info("Script bitti (%.1f sn)", time.monotonic() - started)
+            log.info(tr("Script finished (%.1f s)"), time.monotonic() - started)
             return 0
         except KeyboardInterrupt:
-            log.warning("Kullanıcı tarafından durduruldu")
+            log.warning(tr("Stopped by the user"))
             return 130
         except ScriptError as e:
             log.error("%s: %s", type(e).__name__, e)
@@ -222,8 +223,8 @@ class ScriptRunner:
                 return e.code or 0
             log.error("%s", e.code)
             return 1
-        except Exception:  # noqa: BLE001 — script hatası; iz bilgisini göster
-            log.error("Script hatası:\n%s", traceback.format_exc())
+        except Exception:  # noqa: BLE001 — script error; show the traceback
+            log.error(tr("Script error:\n%s"), traceback.format_exc())
             return 1
         finally:
             sys.argv = old_argv

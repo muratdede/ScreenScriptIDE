@@ -1,13 +1,13 @@
-"""Çözümlenemeyen nitelik denetimi (PyCharm'daki "Unresolved attribute reference").
+"""Unresolved attribute inspection ("Unresolved attribute reference" in PyCharm).
 
-  - `self.x` / `cls.x`: sınıfın gövdesinde, metotlarında (self.x = …) ya da üst sınıflarında
-    tanımlı olmayan nitelik. Üst sınıflar aynı dosyadan, proje içi modüllerden (kaynak ayrıştırılır),
-    script API'sinden ve yüklü / standart kütüphane modüllerinden çözülür. Çözülemeyen bir üst sınıf,
-    __getattr__, setattr(), bilinmeyen dekoratör ya da metaclass varsa sınıf denetlenmez (yanlış alarm yerine sessizlik).
-  - `modul.x`: `import os` sonrası `os.pathh` gibi, modülde bulunmayan isim.
-  - `API_NESNESI.x`: script API nesnesinde bulunmayan nitelik.
+  - `self.x` / `cls.x`: an attribute not defined in the class body, its methods (self.x = …) or its
+    base classes. Base classes are resolved from the same file, modules inside the project (source is
+    parsed), the script API and loaded / standard library modules. If there is an unresolvable base class,
+    __getattr__, setattr(), an unknown decorator or a metaclass, the class is not inspected (silence instead of false alarms).
+  - `module.x`: a name missing in the module, like `os.pathh` after `import os`.
+  - `API_OBJECT.x`: an attribute missing on a script API object.
 
-Sonuçlar inspections.Issue demetleridir; 7. eleman en yakın doğru isimdir (hızlı düzeltme için).
+Results are inspections.Issue tuples; the 7th element is the closest correct name (for the quick fix).
 """
 
 from __future__ import annotations
@@ -22,9 +22,11 @@ import os
 import sys
 from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
+from ..i18n import tr
+
 WARNING = "warning"
 
-# gövdeye yeni nitelik eklemeyen, bilinen sınıf dekoratörleri
+# known class decorators that add no new attributes to the body
 _SAFE_DECORATORS = {"dataclass", "total_ordering", "final", "unique", "runtime_checkable", "dataclass_json"}
 _OBJECT_MEMBERS = frozenset(dir(object))
 
@@ -32,7 +34,7 @@ _SOURCE_CACHE: Dict[str, Tuple[Tuple[int, int], Optional[ast.Module]]] = {}
 
 
 def _parse_file(path: str) -> Optional[ast.Module]:
-    """Kaynak dosyayı ayrıştır (damga değişmedikçe önbellekten)."""
+    """Parses a source file (from the cache while the stamp is unchanged)."""
     try:
         st = os.stat(path)
     except OSError:
@@ -51,7 +53,7 @@ def _parse_file(path: str) -> Optional[ast.Module]:
 
 
 def _module_level(tree: ast.Module):
-    """Modül düzeyindeki deyimler (if/try blokları dahil)."""
+    """Module level statements (including if/try blocks)."""
     stack = list(tree.body)
     while stack:
         s = stack.pop(0)
@@ -62,7 +64,7 @@ def _module_level(tree: ast.Module):
 
 
 def _self_stores(cls: ast.ClassDef) -> Set[str]:
-    """Sınıf içinde herhangi bir isim üzerinden atanan nitelikler (self.x = …, cls.y = …)."""
+    """Attributes assigned through any name inside the class (self.x = …, cls.y = …)."""
     out = set()
     for n in ast.walk(cls):
         if isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del)) and isinstance(n.value, ast.Name):
@@ -71,7 +73,7 @@ def _self_stores(cls: ast.ClassDef) -> Set[str]:
 
 
 def _load_module(name: str):
-    """Yalnızca zaten yüklü ya da standart kütüphane modülleri içe aktarılır (kullanıcı kodu çalıştırılmaz)."""
+    """Only already loaded or standard library modules are imported (user code is never executed)."""
     mod = sys.modules.get(name)
     if mod is not None:
         return mod
@@ -84,7 +86,7 @@ def _load_module(name: str):
 
 
 def _python_class_stores(cls: type) -> Optional[Set[str]]:
-    """Python'la yazılmış bir sınıfın (ve MRO'sunun) __init__ vb. içinde atadığı örnek nitelikleri."""
+    """Instance attributes assigned in __init__ etc. of a class written in Python (and its MRO)."""
     out: Set[str] = set()
     for klass in cls.__mro__:
         if klass is object or klass.__module__ == "builtins":
@@ -94,7 +96,7 @@ def _python_class_stores(cls: type) -> Optional[Set[str]]:
         except (TypeError, OSError):
             path = None
         if not path:
-            continue   # C eklentisi: örnek nitelikleri dir() ile görünür
+            continue   # C extension: instance attributes are visible via dir()
         tree = _parse_file(path)
         if tree is None:
             continue
@@ -118,7 +120,7 @@ def _runtime_class_members(obj) -> Optional[Set[str]]:
 
 
 class ModuleIndex:
-    """Bir dosyanın sınıfları ve importları; üst sınıfların nitelik kümelerini çözer."""
+    """Classes and imports of a file; resolves the attribute sets of base classes."""
 
     def __init__(self, tree: ast.Module, api: Mapping[str, object], search_dirs: List[str],
                  bound: Optional[Mapping[str, int]] = None, depth: int = 0):
@@ -126,7 +128,7 @@ class ModuleIndex:
         self.search_dirs = search_dirs
         self.depth = depth
         self.classes: Dict[str, ast.ClassDef] = {}
-        self.imports: Dict[str, Tuple[str, Optional[str]]] = {}   # yerel isim -> (modül, isim|None)
+        self.imports: Dict[str, Tuple[str, Optional[str]]] = {}   # local name -> (module, name|None)
         seen: Dict[str, int] = {}
         for s in _module_level(tree):
             if isinstance(s, ast.ClassDef):
@@ -140,22 +142,22 @@ class ModuleIndex:
                         top = a.name.split(".")[0]
                         self.imports[top] = (top, None)
             elif isinstance(s, ast.ImportFrom) and (s.module or s.level):
-                module = "." * s.level + (s.module or "")   # göreli importlar noktalı kalır: ".base"
+                module = "." * s.level + (s.module or "")   # relative imports keep their dots: ".base"
                 for a in s.names:
                     if a.name != "*":
                         self.imports[a.asname or a.name] = (module, a.name)
-        # iki kez tanımlanan sınıflar belirsiz
+        # classes defined twice are ambiguous
         for name, n in seen.items():
             if n > 1 or (bound is not None and bound.get(name, 0) > 1):
                 self.classes.pop(name, None)
         self._members: Dict[int, Optional[Set[str]]] = {}
 
-    # ---- sınıf üyeleri ---------------------------------------------------- #
+    # ---- class members ---------------------------------------------------- #
     def members(self, cls: ast.ClassDef) -> Optional[Set[str]]:
         key = id(cls)
         if key in self._members:
             return self._members[key]
-        self._members[key] = None   # döngüsel kalıtım koruması
+        self._members[key] = None   # guard against cyclic inheritance
         result = self._compute(cls)
         self._members[key] = result
         return result
@@ -225,7 +227,7 @@ class ModuleIndex:
 
     def _imported_members(self, module: str, name: Optional[str]) -> Optional[Set[str]]:
         if name is None:
-            return None   # modülün kendisinden türetilemez
+            return None   # cannot derive from the module itself
         local = self._local_module(module)
         if local is not None:
             if self.depth > 4:
@@ -236,7 +238,7 @@ class ModuleIndex:
             index = ModuleIndex(tree, {}, [os.path.dirname(local)] + self.search_dirs, depth=self.depth + 1)
             if name in index.classes:
                 return index.members(index.classes[name])
-            if name in index.imports:   # yeniden dışa aktarım
+            if name in index.imports:   # re-export
                 return index._imported_members(*index.imports[name])
             return None
         mod = _load_module(module)
@@ -244,7 +246,7 @@ class ModuleIndex:
 
     def _local_module(self, module: str) -> Optional[str]:
         dirs = self.search_dirs
-        if module.startswith("."):   # göreli: dosyanın klasöründen (level-1) yukarı
+        if module.startswith("."):   # relative: (level-1) up from the file's folder
             level = len(module) - len(module.lstrip("."))
             base = self.search_dirs[0] if self.search_dirs else ""
             for _ in range(level - 1):
@@ -260,7 +262,7 @@ class ModuleIndex:
         return None
 
     def module_object(self, local_name: str):
-        """`import x` ile bağlanmış isim -> yüklü modül nesnesi (proje içi modüller hariç)."""
+        """Name bound with `import x` -> loaded module object (except modules inside the project)."""
         entry = self.imports.get(local_name)
         if entry is None:
             return None
@@ -270,7 +272,7 @@ class ModuleIndex:
             return None
         if attr is None:
             obj = _load_module(full)
-        else:   # from paket import altmodul
+        else:   # from package import submodule
             parent = _load_module(module)
             obj = getattr(parent, attr, None) if parent is not None else None
         return obj if inspect.ismodule(obj) else None
@@ -293,7 +295,7 @@ def check_attributes(tree: ast.Module, lines: List[str], api: Mapping[str, objec
                      search_dirs: List[str], bound: Mapping[str, int]) -> list:
     index = ModuleIndex(tree, api, search_dirs, bound)
     out = []
-    # dosyada herhangi bir nesneye dışarıdan atanan nitelikler (obj.x = …) bilinen sayılır
+    # attributes assigned from outside to any object in the file (obj.x = …) count as known
     stored_anywhere = {n.attr for n in ast.walk(tree)
                        if isinstance(n, ast.Attribute) and isinstance(n.ctx, (ast.Store, ast.Del))}
 
@@ -317,10 +319,10 @@ def check_attributes(tree: ast.Module, lines: List[str], api: Mapping[str, objec
                 if attr in members or attr in stored_anywhere or (attr.startswith("__") and attr.endswith("__")):
                     continue
                 line, col, end = _attr_range(node, lines)
-                out.append((line, col, end, WARNING, f"'{cls.name}' sınıfında '{attr}' niteliği bulunamadı",
+                out.append((line, col, end, WARNING, tr("Attribute '{attr}' not found in class '{cls}'", attr=attr, cls=cls.name),
                             "UnresolvedAttribute", _suggest(attr, members)))
 
-    # ---- modul.x / API_NESNESI.x ------------------------------------------ #
+    # ---- module.x / API_OBJECT.x ------------------------------------------ #
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name)):
             continue
@@ -333,26 +335,26 @@ def check_attributes(tree: ast.Module, lines: List[str], api: Mapping[str, objec
                 continue
             try:
                 if importlib.util.find_spec(f"{mod.__name__}.{attr}") is not None:
-                    continue   # alt modül (henüz içe aktarılmamış olabilir)
+                    continue   # submodule (may not be imported yet)
             except (ImportError, ValueError, AttributeError):
                 pass
             line, col, end = _attr_range(node, lines)
-            out.append((line, col, end, WARNING, f"'{name}' modülünde '{attr}' bulunamadı",
+            out.append((line, col, end, WARNING, tr("'{attr}' not found in module '{module}'", attr=attr, module=name),
                         "UnresolvedReference", _suggest(attr, dir(mod))))
         elif name in api and name not in bound:
             obj = api[name]
             if inspect.ismodule(obj) or hasattr(obj, attr) or hasattr(type(obj), "__getattr__"):
                 continue
             line, col, end = _attr_range(node, lines)
-            out.append((line, col, end, WARNING, f"'{name}' nesnesinde '{attr}' niteliği bulunamadı",
+            out.append((line, col, end, WARNING, tr("Attribute '{attr}' not found on object '{name}'", attr=attr, name=name),
                         "UnresolvedAttribute", _suggest(attr, dir(obj))))
     return out
 
 
 def _loads_of(method, me: str):
-    """Metot içinde `me.x` okumaları; `me`yi yeniden bağlayan iç fonksiyonlara girilmez."""
+    """`me.x` reads inside a method; inner functions rebinding `me` are not entered."""
     if any(isinstance(n, ast.Name) and n.id == me and isinstance(n.ctx, ast.Store) for n in ast.walk(method)):
-        return   # self yeniden atanmış: tipi bilinemez
+        return   # self was reassigned: its type is unknown
     stack = list(method.body)
     while stack:
         n = stack.pop()

@@ -1,7 +1,7 @@
-"""Ana pencere (IntelliJ "New UI" düzeni):
-  - üstte ana araç çubuğu: ☰ menü, proje seçici, çalıştırma hedefi, Çalıştır / Debug / Durdur, ayarlar
-  - solda ve sağda araç penceresi şeritleri (tool window stripes); aynı gruptan tek pencere görünür
-  - ortada editör sekmeleri, altta yol (breadcrumb) + imleç konumu gösteren durum çubuğu
+"""Main window (IntelliJ "New UI" layout):
+  - main toolbar at the top: ☰ menu, project selector, run target, Run / Debug / Stop, settings
+  - tool window stripes on the left and right; only one window of the same group is visible
+  - editor tabs in the middle, a status bar at the bottom showing the path (breadcrumb) + cursor position
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (QFileDialog, QInputDialog, QLabel, QMainWindow, Q
 from ..core.context import EditorContext
 from ..core.run_controller import RunController
 from ..core.session import SessionState
+from ..i18n import tr
 from . import icons
 from .dialogs import ProjectSettingsDialog
 from .editor_tabs import EditorTabs
@@ -29,7 +30,7 @@ _PROJECT_COLORS = ["#7b61d6", "#3d8f58", "#c75450", "#3574f0", "#c7812d", "#2a9d
 
 
 class DropDownButton(QToolButton):
-    """Metin + sağda küçük ok; tıklayınca menü açılır (IntelliJ'deki proje / çalıştırma seçicisi gibi)."""
+    """Text + a small arrow on the right; opens a menu on click (like the project / run selector in IntelliJ)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -58,7 +59,7 @@ def _spacer(width: int = 0) -> QWidget:
 
 
 class MainWindow(QMainWindow):
-    STATE_VERSION = 2   # v1 = eski sekmeli dock düzeni; yok sayılır
+    STATE_VERSION = 2   # v1 = old tabbed dock layout; ignored
 
     def __init__(self, ctx: EditorContext, view_classes: Optional[Iterable[Type[DockView]]] = None):
         super().__init__()
@@ -72,7 +73,7 @@ class MainWindow(QMainWindow):
         self.tabs = EditorTabs(ctx)
         ctx.documents = self.tabs
         self.setCentralWidget(self.tabs)
-        self._problems_badge = ProblemsBadge(ctx, self.tabs)   # kod alanının sağ üstü: hata/uyarı özeti
+        self._problems_badge = ProblemsBadge(ctx, self.tabs)   # top right of the code area: error/warning summary
         self._problems_badge.clicked.connect(self._show_problems)
         self.run_controller = RunController(ctx, self)
 
@@ -86,7 +87,7 @@ class MainWindow(QMainWindow):
         self._create_main_toolbar()
         self._create_stripes()
         self._create_statusbar()
-        self.menuBar().hide()   # menüler ☰ düğmesinde; kısayollar pencereye eklendiği için çalışmaya devam eder
+        self.menuBar().hide()   # menus live in the ☰ button; shortcuts keep working since they are added to the window
 
         bus = ctx.bus
         bus.project_opened.connect(self._on_project_opened)
@@ -104,7 +105,7 @@ class MainWindow(QMainWindow):
         self._update_run_target()
         self._restore_layout()
 
-    # ---- view'lar -------------------------------------------------------- #
+    # ---- views ----------------------------------------------------------- #
     def _create_views(self, classes: Iterable[Type[DockView]]) -> None:
         groups: Dict[str, List[DockView]] = {}
         for cls in classes:
@@ -137,7 +138,7 @@ class MainWindow(QMainWindow):
             self.resizeDocks([self.views["screen"]], [520], Qt.Horizontal)
 
     def show_view(self, view: DockView) -> None:
-        """view'ı gösterir; aynı gruptaki (yerleşik) diğer view'ları gizler."""
+        """Shows the view; hides the other (docked) views of the same group."""
         if view.tab_group and not view.isFloating():
             for other in self.views.values():
                 if other is not view and other.tab_group == view.tab_group and not other.isFloating():
@@ -160,7 +161,7 @@ class MainWindow(QMainWindow):
                     view.hide()
                 seen.add(view.tab_group)
 
-    # ---- eylemler -------------------------------------------------------- #
+    # ---- actions --------------------------------------------------------- #
     def _action(self, key: str, text: str, slot, shortcut=None, tip: str = "", checkable=False,
                 icon: Optional[str] = None, color: str = icons.DEFAULT_COLOR) -> QAction:
         a = QAction(text, self)
@@ -173,7 +174,7 @@ class MainWindow(QMainWindow):
             a.setStatusTip(tip)
         a.setCheckable(checkable)
         a.triggered.connect(slot)
-        self.addAction(a)   # menü çubuğu gizli olsa da kısayol çalışsın
+        self.addAction(a)   # so the shortcut works even though the menu bar is hidden
         self._actions[key] = a
         return a
 
@@ -181,48 +182,49 @@ class MainWindow(QMainWindow):
         rc = self.run_controller
         A = self._action
         green, red = "#5fb865", "#db5c5c"
-        A("open_project", "Proje Aç…", self.open_project_dialog, "Ctrl+Shift+O", icon="folder")
-        A("new_script", "Yeni Script…", self.new_script, "Ctrl+N", icon="add")
-        A("save", "Kaydet", self.tabs.save_current, "Ctrl+S", icon="save")
-        A("save_all", "Tümünü Kaydet", self.tabs.save_all, "Ctrl+Shift+S")
-        A("close_tab", "Sekmeyi Kapat", lambda: self.tabs.close_tab(self.tabs.currentIndex()), "Ctrl+W")
-        A("quit", "Çıkış", self.close, "Ctrl+Q")
-        A("settings", "Proje Ayarları…", self.edit_settings, "Ctrl+Alt+Shift+S", icon="settings")
-        A("app_settings", "Ayarlar…", self.edit_app_settings, "Ctrl+Alt+S", icon="settings")
-        A("grab", "Ekranı Canlı Yakala / Durdur", self.ctx.toggle_live_screen, "Ctrl+Shift+G", icon="camera")
-        A("grab_once", "Tek Kare Yakala", self.ctx.grab_screen, icon="refresh")
+        A("open_project", tr("Open Project…"), self.open_project_dialog, "Ctrl+Shift+O", icon="folder")
+        A("new_script", tr("New Script…"), self.new_script, "Ctrl+N", icon="add")
+        A("save", tr("Save"), self.tabs.save_current, "Ctrl+S", icon="save")
+        A("save_all", tr("Save All"), self.tabs.save_all, "Ctrl+Shift+S")
+        A("close_tab", tr("Close Tab"), lambda: self.tabs.close_tab(self.tabs.currentIndex()), "Ctrl+W")
+        A("quit", tr("Exit"), self.close, "Ctrl+Q")
+        A("settings", tr("Project Settings…"), self.edit_settings, "Ctrl+Alt+Shift+S", icon="settings")
+        A("app_settings", tr("Settings…"), self.edit_app_settings, "Ctrl+Alt+S", icon="settings")
+        A("grab", tr("Capture Screen Live / Stop"), self.ctx.toggle_live_screen, "Ctrl+Shift+G", icon="camera")
+        A("grab_once", tr("Capture Single Frame"), self.ctx.grab_screen, icon="refresh")
 
-        A("complete", "Tamamla", lambda: self._editor_call("show_completions"), None,
-          "Ctrl+Space ile editör içinde de açılır")
-        A("signature", "Parametre Bilgisi", lambda: self._editor_call("show_signature", True), None,
-          "Ctrl+Shift+Space ile editör içinde de açılır")
-        A("comment", "Yorum Aç/Kapat", lambda: self._editor_call("toggle_comment"), None)
-        A("goto", "Satıra Git…", self.goto_line, "Ctrl+G")
-        A("goto_def", "Tanıma Git", lambda: self._editor_call("go_to_definition"), ["Ctrl+B", "F12"],
-          "Ctrl+tık ile de gidilir")
-        A("find", "Bul…", lambda: self._editor_call("show_find", False), "Ctrl+F", icon="search")
-        A("replace", "Değiştir…", lambda: self._editor_call("show_find", True), "Ctrl+R")
-        A("find_next", "Sonrakini Bul", lambda: self._editor_call("find_next"), "F3")
-        A("find_prev", "Öncekini Bul", lambda: self._editor_call("find_previous"), "Shift+F3")
-        A("next_problem", "Sonraki Sorun", lambda: self._editor_call("go_to_problem", True), "F8")
-        A("prev_problem", "Önceki Sorun", lambda: self._editor_call("go_to_problem", False), "Shift+F8")
-        A("find_files", "Dosyalarda Bul…", lambda: self.find_in_files(False), "Ctrl+Shift+F", icon="search")
-        A("replace_files", "Dosyalarda Değiştir…", lambda: self.find_in_files(True), "Ctrl+Shift+R")
+        A("complete", tr("Complete"), lambda: self._editor_call("show_completions"), None,
+          tr("Also opens with Ctrl+Space inside the editor"))
+        A("signature", tr("Parameter Info"), lambda: self._editor_call("show_signature", True), None,
+          tr("Also opens with Ctrl+Shift+Space inside the editor"))
+        A("comment", tr("Toggle Comment"), lambda: self._editor_call("toggle_comment"), None)
+        A("goto", tr("Go to Line…"), self.goto_line, "Ctrl+G")
+        A("goto_def", tr("Go to Definition"), lambda: self._editor_call("go_to_definition"), ["Ctrl+B", "F12"],
+          tr("Ctrl+click works too"))
+        A("find", tr("Find…"), lambda: self._editor_call("show_find", False), "Ctrl+F", icon="search")
+        A("replace", tr("Replace…"), lambda: self._editor_call("show_find", True), "Ctrl+R")
+        A("find_next", tr("Find Next"), lambda: self._editor_call("find_next"), "F3")
+        A("find_prev", tr("Find Previous"), lambda: self._editor_call("find_previous"), "Shift+F3")
+        A("next_problem", tr("Next Problem"), lambda: self._editor_call("go_to_problem", True), "F8")
+        A("prev_problem", tr("Previous Problem"), lambda: self._editor_call("go_to_problem", False), "Shift+F8")
+        A("find_files", tr("Find in Files…"), lambda: self.find_in_files(False), "Ctrl+Shift+F", icon="search")
+        A("replace_files", tr("Replace in Files…"), lambda: self.find_in_files(True), "Ctrl+Shift+R")
 
-        A("run", "Çalıştır", lambda: rc.run(debug=False), ["Shift+F10", "Ctrl+F5"], "Debug olmadan çalıştır",
+        A("run", tr("Run"), lambda: rc.run(debug=False), ["Shift+F10", "Ctrl+F5"], tr("Run without debugging"),
           icon="run", color=green)
-        A("debug", "Debug", self._debug, ["F5", "Shift+F9"], "Debug başlat ya da devam et", icon="bug", color=green)
-        A("stop", "Durdur", rc.stop, ["Shift+F5", "Ctrl+F2"], icon="stop", color=red)
-        A("pause", "Duraklat", rc.pause, "F6", icon="pause")
-        A("step_over", "Üstünden Atla", rc.step_over, "F10", icon="step_over")
-        A("step_into", "İçine Gir", rc.step_into, "F11", icon="step_into")
-        A("step_out", "Dışına Çık", rc.step_out, "Shift+F11", icon="step_out")
-        A("toggle_bp", "Breakpoint Aç/Kapat", lambda: self._editor_call("toggle_breakpoint"), ["F9", "Ctrl+F8"],
+        A("debug", tr("Debug"), self._debug, ["F5", "Shift+F9"], tr("Start or continue debugging"), icon="bug",
+          color=green)
+        A("stop", tr("Stop"), rc.stop, ["Shift+F5", "Ctrl+F2"], icon="stop", color=red)
+        A("pause", tr("Pause"), rc.pause, "F6", icon="pause")
+        A("step_over", tr("Step Over"), rc.step_over, "F10", icon="step_over")
+        A("step_into", tr("Step Into"), rc.step_into, "F11", icon="step_into")
+        A("step_out", tr("Step Out"), rc.step_out, "Shift+F11", icon="step_out")
+        A("toggle_bp", tr("Toggle Breakpoint"), lambda: self._editor_call("toggle_breakpoint"), ["F9", "Ctrl+F8"],
           icon="breakpoint", color=red)
-        A("mute_bps", "Breakpoint'leri Geçici Kapat", self.ctx.breakpoints.set_muted, "Ctrl+F9",
-          "Breakpoint'ler silinmeden devre dışı bırakılır", checkable=True, icon="mute_breakpoints", color=red)
+        A("mute_bps", tr("Mute Breakpoints"), self.ctx.breakpoints.set_muted, "Ctrl+F9",
+          tr("Breakpoints are disabled without being deleted"), checkable=True, icon="mute_breakpoints", color=red)
         self.ctx.breakpoints.muted_changed.connect(self._actions["mute_bps"].setChecked)
-        A("stop_on_entry", "Debug'da İlk Satırda Dur", lambda: None, checkable=True, icon="entry")
+        A("stop_on_entry", tr("Stop at First Line When Debugging"), lambda: None, checkable=True, icon="entry")
 
     def _debug(self) -> None:
         self.run_controller.run(debug=True, stop_on_entry=self._actions["stop_on_entry"].isChecked())
@@ -230,9 +232,9 @@ class MainWindow(QMainWindow):
     def _create_menu(self) -> None:
         a = self._actions
         self._main_menu = root = QMenu(self)
-        m = root.addMenu("Dosya")
+        m = root.addMenu(tr("File"))
         m.addActions([a["new_script"], a["open_project"]])
-        self._recent_menu = m.addMenu("Son Projeler")
+        self._recent_menu = m.addMenu(tr("Recent Projects"))
         self._recent_menu.aboutToShow.connect(lambda: self._fill_recent(self._recent_menu))
         m.addSeparator()
         m.addActions([a["save"], a["save_all"], a["close_tab"]])
@@ -241,38 +243,38 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addAction(a["quit"])
 
-        m = root.addMenu("Düzen")
+        m = root.addMenu(tr("Edit"))
         m.addActions([a["find"], a["replace"], a["find_next"], a["find_prev"]])
         m.addSeparator()
         m.addActions([a["find_files"], a["replace_files"]])
         m.addSeparator()
         m.addActions([a["complete"], a["signature"], a["comment"]])
 
-        m = root.addMenu("Git")
+        m = root.addMenu(tr("Navigate"))
         m.addActions([a["goto_def"], a["goto"], a["next_problem"], a["prev_problem"]])
 
-        m = root.addMenu("Çalıştır")
+        m = root.addMenu(tr("Run"))
         m.addActions([a["run"], a["debug"], a["stop"], a["pause"]])
         m.addSeparator()
         m.addActions([a["step_over"], a["step_into"], a["step_out"]])
         m.addSeparator()
         m.addActions([a["toggle_bp"], a["mute_bps"], a["stop_on_entry"]])
 
-        m = root.addMenu("Proje")
+        m = root.addMenu(tr("Project"))
         m.addActions([a["settings"], a["grab"], a["grab_once"]])
 
-        m = root.addMenu("Görünüm")
+        m = root.addMenu(tr("View"))
         m.addActions(list(self._view_actions.values()))
         m.addSeparator()
-        m.addAction("Yerleşimi Sıfırla", self._reset_layout)
+        m.addAction(tr("Reset Layout"), self._reset_layout)
 
-        # eski menü çubuğu da dolu kalsın (Alt ile gösterilmez, sadece erişilebilirlik için)
+        # keep the old menu bar filled too (not shown with Alt, only for accessibility)
         for menu_action in root.actions():
             self.menuBar().addAction(menu_action)
 
     def _create_main_toolbar(self) -> None:
         a = self._actions
-        tb = QToolBar("Ana araç çubuğu")
+        tb = QToolBar(tr("Main toolbar"))
         tb.setObjectName("main_toolbar")
         tb.setMovable(False)
         tb.setFloatable(False)
@@ -282,18 +284,18 @@ class MainWindow(QMainWindow):
 
         menu_btn = QToolButton()
         menu_btn.setIcon(icons.icon("menu"))
-        menu_btn.setToolTip("Ana menü")
+        menu_btn.setToolTip(tr("Main menu"))
         menu_btn.setMenu(self._main_menu)
         menu_btn.setPopupMode(QToolButton.InstantPopup)
         tb.addWidget(menu_btn)
         tb.addWidget(_spacer(4))
 
         self._project_btn = DropDownButton()
-        self._project_btn.setText("Proje yok")
+        self._project_btn.setText(tr("No project"))
         self._project_btn.setIcon(icons.badge("?", "#5a5d63"))
         pmenu = QMenu(self)
         pmenu.addAction(a["open_project"])
-        recent = pmenu.addMenu("Son Projeler")
+        recent = pmenu.addMenu(tr("Recent Projects"))
         recent.aboutToShow.connect(lambda: self._fill_recent(recent))
         pmenu.addSeparator()
         pmenu.addAction(a["settings"])
@@ -306,13 +308,13 @@ class MainWindow(QMainWindow):
         self._target_btn.setIconSize(QSize(16, 16))
         tmenu = QMenu(self)
         group = QActionGroup(self)
-        self._target_current = tmenu.addAction("Aktif dosya", lambda: self._set_target(RunController.TARGET_CURRENT))
-        self._target_main = tmenu.addAction("Ana script", lambda: self._set_target(RunController.TARGET_MAIN))
+        self._target_current = tmenu.addAction(tr("Active file"), lambda: self._set_target(RunController.TARGET_CURRENT))
+        self._target_main = tmenu.addAction(tr("Main script"), lambda: self._set_target(RunController.TARGET_MAIN))
         for act in (self._target_current, self._target_main):
             act.setCheckable(True)
             group.addAction(act)
         tmenu.addSeparator()
-        tmenu.addAction("Ana script'i değiştir…", self.edit_settings)
+        tmenu.addAction(tr("Change main script…"), self.edit_settings)
         tmenu.aboutToShow.connect(self._update_run_target)
         self._target_btn.setMenu(tmenu)
         tb.addWidget(self._target_btn)
@@ -320,7 +322,7 @@ class MainWindow(QMainWindow):
 
         more = QToolButton()
         more.setIcon(icons.icon("more"))
-        more.setToolTip("Diğer çalıştırma seçenekleri")
+        more.setToolTip(tr("More run options"))
         mmenu = QMenu(self)
         mmenu.addActions([a["stop_on_entry"], a["toggle_bp"], a["mute_bps"]])
         mmenu.addSeparator()
@@ -373,11 +375,11 @@ class MainWindow(QMainWindow):
         self._crumb_label = QLabel()
         self._state_label = QLabel()
         self._device_label = QLabel()
-        self._device_label.setToolTip("ADB hedefi (Ayarlar, Ctrl+Alt+S)")
+        self._device_label.setToolTip(tr("ADB target (Settings, Ctrl+Alt+S)"))
         self._pos_label = QLabel()
-        self._enc_label = QLabel("UTF-8   4 boşluk")
+        self._enc_label = QLabel(tr("UTF-8   4 spaces"))
         self._problems_label = QLabel()
-        self._problems_label.setToolTip("Sorunlar (Alt+6) — tıklayın")
+        self._problems_label.setToolTip(tr("Problems (Alt+6) — click"))
         self._problems_label.setCursor(Qt.PointingHandCursor)
         self._problems_label.mousePressEvent = lambda _e: self._show_problems()
         sb.addWidget(self._crumb_label, 1)
@@ -411,14 +413,14 @@ class MainWindow(QMainWindow):
             self._find_dialog = FindInFilesDialog(self.ctx, self)
         editor = self.tabs.current_editor()
         selected = editor.textCursor().selectedText() if editor else ""
-        self._find_dialog.open_with(selected if selected and " " not in selected else "", replace)
+        self._find_dialog.open_with(selected if selected and " " not in selected else "", replace)
 
     def _editor_call(self, method: str, *args) -> None:
         editor = self.tabs.current_editor()
         if editor:
             getattr(editor, method)(*args)
 
-    # ---- durum ----------------------------------------------------------- #
+    # ---- state ----------------------------------------------------------- #
     def _update_run_actions(self, state: SessionState) -> None:
         a = self._actions
         idle, paused = state is SessionState.IDLE, state is SessionState.PAUSED
@@ -426,7 +428,7 @@ class MainWindow(QMainWindow):
         debugging = self.ctx.session.is_debugging
         a["run"].setEnabled(idle)
         a["debug"].setEnabled(idle or paused)
-        a["debug"].setText("Devam" if paused else "Debug")
+        a["debug"].setText(tr("Resume") if paused else tr("Debug"))
         a["debug"].setIcon(icons.icon("resume" if paused else "bug", "#5fb865"))
         a["debug"].setToolTip(f"{a['debug'].text()} (F5)")
         a["stop"].setEnabled(not idle)
@@ -434,15 +436,16 @@ class MainWindow(QMainWindow):
         for k in ("step_over", "step_into", "step_out"):
             a[k].setEnabled(paused)
         text = {SessionState.IDLE: "",
-                SessionState.RUNNING: "<span style='color:#5fb865'>●</span> Çalışıyor",
-                SessionState.PAUSED: "<span style='color:#f2c55c'>‖</span> Duraklatıldı"}[state]
+                SessionState.RUNNING: "<span style='color:#5fb865'>●</span> " + tr("Running"),
+                SessionState.PAUSED: "<span style='color:#f2c55c'>‖</span> " + tr("Paused")}[state]
         self._state_label.setText(text)
         self._target_btn.setEnabled(idle)
 
     def _on_paused(self, msg: dict) -> None:
-        reason = {"breakpoint": "breakpoint", "step": "adım", "pause": "duraklatma", "entry": "giriş"}.get(
-            msg.get("reason"), msg.get("reason"))
-        self.statusBar().showMessage(f"Durdu ({reason}): {os.path.basename(msg['file'])}:{msg['line']}", 5000)
+        reason = {"breakpoint": tr("breakpoint"), "step": tr("step"), "pause": tr("pause"),
+                  "entry": tr("entry")}.get(msg.get("reason"), msg.get("reason"))
+        self.statusBar().showMessage(tr("Stopped ({reason}): {file}:{line}", reason=reason,
+                                        file=os.path.basename(msg['file']), line=msg['line']), 5000)
         if "debug" in self.views:
             self.views["debug"].reveal()
         self.activateWindow()
@@ -450,7 +453,7 @@ class MainWindow(QMainWindow):
     def _on_live_changed(self, live: bool) -> None:
         a = self._actions["grab"]
         a.setIcon(icons.icon("stop", "#ff8a8a") if live else icons.icon("camera"))
-        a.setToolTip("Canlı görüntüyü durdur (Ctrl+Shift+G)" if live else "Ekranı canlı yakala (Ctrl+Shift+G)")
+        a.setToolTip(tr("Stop the live view (Ctrl+Shift+G)") if live else tr("Capture the screen live (Ctrl+Shift+G)"))
 
     def _set_target(self, mode: str) -> None:
         self.run_controller.set_target_mode(mode)
@@ -460,17 +463,17 @@ class MainWindow(QMainWindow):
         rc = self.run_controller
         project = self.ctx.project
         main = project.config.main_script if project else "main.py"
-        self._target_main.setText(f"Ana script ({main})")
+        self._target_main.setText(tr("Main script ({name})", name=main))
         (self._target_current if rc.target_mode == rc.TARGET_CURRENT else self._target_main).setChecked(True)
         target = rc.target_script()
         if target:
             self._target_btn.setText(os.path.basename(target))
             self._target_btn.setIcon(icons.file_icon(target))
-            self._target_btn.setToolTip(f"Çalıştırılacak: {target}")
+            self._target_btn.setToolTip(tr("To run: {path}", path=target))
         else:
-            self._target_btn.setText("Script yok")
+            self._target_btn.setText(tr("No script"))
             self._target_btn.setIcon(icons.icon("file", "#6f737a"))
-            self._target_btn.setToolTip("Çalıştırılacak script yok")
+            self._target_btn.setToolTip(tr("No script to run"))
 
     def _on_active_file(self, path: str) -> None:
         self._update_run_target()
@@ -484,16 +487,16 @@ class MainWindow(QMainWindow):
             parts = [path]
         self._crumb_label.setText("  ›  ".join(parts))
 
-    # ---- proje ----------------------------------------------------------- #
+    # ---- project --------------------------------------------------------- #
     def open_project_dialog(self) -> None:
         start = self.ctx.project.root if self.ctx.project else os.path.expanduser("~")
-        path = QFileDialog.getExistingDirectory(self, "Proje klasörü seç", start)
+        path = QFileDialog.getExistingDirectory(self, tr("Select project folder"), start)
         if path:
             self.open_project(path)
 
     def open_project(self, path: str) -> bool:
         if self.ctx.session.is_active:
-            QMessageBox.information(self, "Çalışıyor", "Önce çalışan script'i durdurun.")
+            QMessageBox.information(self, tr("Running"), tr("Stop the running script first."))
             return False
         if not self.tabs.close_all():
             return False
@@ -501,7 +504,7 @@ class MainWindow(QMainWindow):
             self.ctx.open_project(path)
             return True
         except Exception as e:  # noqa: BLE001
-            QMessageBox.warning(self, "Proje açılamadı", str(e))
+            QMessageBox.warning(self, tr("Project could not be opened"), str(e))
             return False
 
     def _on_project_opened(self, project) -> None:
@@ -529,7 +532,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _open_files_key(root: str) -> str:
-        # QSettings anahtarında \\ ve / ayraç sayılır; yolu özetle
+        # \\ and / count as separators in QSettings keys; hash the path
         return "open_files/" + hashlib.md5(os.path.normcase(root).encode("utf-8")).hexdigest()
 
     def _fill_recent(self, menu: QMenu) -> None:
@@ -538,25 +541,25 @@ class MainWindow(QMainWindow):
             act = menu.addAction(root, lambda r=root: self.open_project(r))
             act.setEnabled(os.path.isdir(root))
         if menu.isEmpty():
-            menu.addAction("(boş)").setEnabled(False)
+            menu.addAction(tr("(empty)")).setEnabled(False)
 
     def new_script(self) -> None:
         if not self.ctx.project:
-            QMessageBox.information(self, "Proje yok", "Önce bir proje klasörü açın.")
+            QMessageBox.information(self, tr("No project"), tr("Open a project folder first."))
             return
-        name, ok = QInputDialog.getText(self, "Yeni script", "Dosya adı:", text="yeni_script.py")
+        name, ok = QInputDialog.getText(self, tr("New script"), tr("File name:"), text=tr("new_script.py"))
         if ok and name.strip():
             try:
                 self.tabs.open_path(self.ctx.project.create_script(name.strip()))
             except OSError as e:
-                QMessageBox.warning(self, "Oluşturulamadı", str(e))
+                QMessageBox.warning(self, tr("Could not be created"), str(e))
 
     def edit_settings(self) -> None:
         if not self.ctx.project:
-            QMessageBox.information(self, "Proje yok", "Önce bir proje klasörü açın.")
+            QMessageBox.information(self, tr("No project"), tr("Open a project folder first."))
             return
         dialog = ProjectSettingsDialog(self.ctx.project, self)
-        dialog.applied.connect(self.ctx.save_project_config)   # Tamam ve Uygula
+        dialog.applied.connect(self.ctx.save_project_config)   # OK and Apply
         dialog.exec()
 
     def edit_app_settings(self) -> None:
@@ -564,22 +567,27 @@ class MainWindow(QMainWindow):
         dialog = AppSettingsDialog(self.ctx.app_config, self)
 
         def save():
-            self.ctx.save_app_config(dialog.result_config())
-            self.statusBar().showMessage("Ayarlar kaydedildi", 3000)
-        dialog.applied.connect(save)   # Tamam ve Uygula
+            old_language = self.ctx.app_config.language
+            config = dialog.result_config()
+            self.ctx.save_app_config(config)
+            self.statusBar().showMessage(tr("Settings saved"), 3000)
+            if config.language != old_language:
+                QMessageBox.information(self, tr("Language"),
+                                        tr("The new interface language will be used after restarting ScreenScript IDE."))
+        dialog.applied.connect(save)   # OK and Apply
         dialog.exec()
 
     def goto_line(self) -> None:
         editor = self.tabs.current_editor()
         if editor:
-            line, ok = QInputDialog.getInt(self, "Satıra git", "Satır:", editor.current_line(), 1,
+            line, ok = QInputDialog.getInt(self, tr("Go to line"), tr("Line:"), editor.current_line(), 1,
                                            editor.blockCount())
             if ok:
                 editor.go_to_line(line)
 
-    # ---- yerleşim -------------------------------------------------------- #
+    # ---- layout ---------------------------------------------------------- #
     def _restore_layout(self) -> None:
-        self._default_state = self.saveState(self.STATE_VERSION)   # "Yerleşimi Sıfırla" için
+        self._default_state = self.saveState(self.STATE_VERSION)   # for "Reset Layout"
         geo = self.ctx.settings.value("window/geometry")
         state = self.ctx.settings.value("window/state")
         if isinstance(geo, QByteArray):
@@ -595,7 +603,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         if self.ctx.session.is_active:
-            if QMessageBox.question(self, "Çalışıyor", "Script çalışıyor. Durdurup çıkılsın mı?") \
+            if QMessageBox.question(self, tr("Running"), tr("A script is running. Stop it and exit?")) \
                     != QMessageBox.Yes:
                 event.ignore()
                 return
@@ -606,7 +614,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self.ctx.telegram.stop()
-        self.ctx.grabber.shutdown()   # screenrecord süreçleri de kapansın
+        self.ctx.grabber.shutdown()   # screenrecord processes must close too
         self.ctx.settings.setValue("window/geometry", self.saveGeometry())
         self.ctx.settings.setValue("window/state", self.saveState(self.STATE_VERSION))
         event.accept()

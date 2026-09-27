@@ -1,12 +1,13 @@
-"""ScreenScript IDE — SikuliX tarzı editör. Uygulamanın kendisi budur.
+"""ScreenScript IDE — a SikuliX style editor. This is the application itself.
 
-Çalıştırma (depo kökünden):
+Running (from the repository root):
     pip install -r requirements.txt
-    python main.py [proje_klasörü]
+    python main.pyw [project_folder]
 
-Arka uç işler (ADB yakalama, görsel script API'si) editor.plugins altında eklenti olarak bulunur.
-Not: Bu dosya, editor.core'un Qt'siz modülleri, editor.agent ve editor.plugins Qt import etmez;
-script süreci hafif kalsın diye.
+Backend work (ADB capture, visual script API) lives as plugins under editor.plugins.
+Note: this file, the Qt-free modules of editor.core, editor.i18n, editor.agent and editor.plugins do
+not import Qt, so that the script process stays lightweight.
+User-visible texts go through editor.i18n.tr (English source strings, catalogs in editor/i18n/locales).
 """
 
 __version__ = "0.1.0"

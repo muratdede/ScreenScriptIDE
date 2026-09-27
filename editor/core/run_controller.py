@@ -1,4 +1,4 @@
-"""Çalıştırma/debug kararlarını veren controller. UI eylemleri buraya bağlanır."""
+"""Controller making run/debug decisions. UI actions are connected here."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Optional
 
 from PySide6.QtCore import QObject
 
+from ..i18n import tr
 from .context import EditorContext
 from .session import LaunchRequest, SessionState
 
@@ -25,15 +26,16 @@ class RunController(QObject):
         s.resumed.connect(bus.debug_resumed)
         s.eval_result.connect(bus.eval_result)
         s.breakpoint_error.connect(
-            lambda m: bus.output.emit(f"Breakpoint geçersiz: {os.path.basename(m['file'])}:{m['line']} "
-                                      f"({m['message']})\n", "err"))
+            lambda m: bus.output.emit(tr("Invalid breakpoint: {file}:{line} ({message})\n",
+                                         file=os.path.basename(m['file']), line=m['line'],
+                                         message=m['message']), "err"))
         bus.debug_frame_selected.connect(lambda i, _f: setattr(self, "_frame_index", i))
         ctx.breakpoints.changed.connect(self._on_breakpoints_changed)
         ctx.breakpoints.muted_changed.connect(self._on_breakpoints_changed)
 
-    # ---- hangi script ---------------------------------------------------- #
-    TARGET_CURRENT = "current"   # aktif sekme (proje içindeki .py ise), değilse ana script
-    TARGET_MAIN = "main"         # her zaman projenin ana script'i
+    # ---- which script ---------------------------------------------------- #
+    TARGET_CURRENT = "current"   # active tab (if it is a .py inside the project), otherwise the main script
+    TARGET_MAIN = "main"         # always the project's main script
 
     @property
     def target_mode(self) -> str:
@@ -44,8 +46,8 @@ class RunController(QObject):
         self._ctx.settings.setValue("run/target_mode", mode)
 
     def target_script(self) -> Optional[str]:
-        """Aktif sekme proje içindeki bir .py ise onu, değilse projenin ana script'ini döndürür
-        (target_mode == "main" ise her zaman ana script'i)."""
+        """Returns the active tab if it is a .py inside the project, otherwise the project's main script
+        (always the main script if target_mode == "main")."""
         project = self._ctx.project
         if project is None:
             return None
@@ -57,7 +59,7 @@ class RunController(QObject):
         main = project.main_script_path
         return main if main and os.path.isfile(main) else None
 
-    # ---- eylemler -------------------------------------------------------- #
+    # ---- actions --------------------------------------------------------- #
     def run(self, debug: bool = False, script: Optional[str] = None, stop_on_entry: bool = False) -> bool:
         session = self._ctx.session
         if session.state is SessionState.PAUSED:
@@ -67,7 +69,7 @@ class RunController(QObject):
             return False
         script = script or self.target_script()
         if not script:
-            self._ctx.bus.output.emit("Çalıştırılacak script yok. Bir proje açın ve .py dosyası seçin.\n", "err")
+            self._ctx.bus.output.emit(tr("No script to run. Open a project and select a .py file.\n"), "err")
             return False
         if self._ctx.documents and not self._ctx.documents.save_all():
             return False
@@ -98,7 +100,7 @@ class RunController(QObject):
     def evaluate(self, expression: str) -> None:
         self._ctx.session.evaluate(expression, self._frame_index)
 
-    # ---- iç olaylar ------------------------------------------------------ #
+    # ---- internal events ------------------------------------------------- #
     def _on_paused(self, msg: dict) -> None:
         self._frame_index = 0
         self._ctx.bus.debug_paused.emit(msg)

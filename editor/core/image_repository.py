@@ -1,11 +1,11 @@
-"""Projedeki görsellerin tek doğruluk kaynağı.
+"""Single source of truth for the images of the project.
 
-Değişiklikleri üç yolla yakalar:
-  1. QFileSystemWatcher  — anlık (klasöre dosya eklenince/silinince)
-  2. Yoklama (polling)    — watcher'ın kaçırdığı durumlar için: klasör silinip yeniden
-                           oluşturulması, ağ sürücüleri, dosyanın yerinde üzerine yazılması
-  3. Pencere odağı        — editöre geri dönüldüğünde hemen tazele
-Liste gerçekten değiştiyse `changed` sinyali bir kez yayılır; view'lar sadece buna abone olur.
+Catches changes in three ways:
+  1. QFileSystemWatcher  — instant (a file is added to/removed from a folder)
+  2. Polling             — for cases the watcher misses: a folder deleted and recreated,
+                           network drives, a file overwritten in place
+  3. Window focus        — refresh immediately when returning to the editor
+If the list really changed, the `changed` signal is emitted once; views only subscribe to it.
 """
 
 from __future__ import annotations
@@ -18,11 +18,11 @@ from PySide6.QtWidgets import QApplication
 
 from .project import Project
 
-Snapshot = Dict[str, Tuple[float, int]]   # yol -> (mtime, boyut)
+Snapshot = Dict[str, Tuple[float, int]]   # path -> (mtime, size)
 
 
 class ImageRepository(QObject):
-    changed = Signal(list)   # sıralı görsel yolları
+    changed = Signal(list)   # sorted image paths
 
     POLL_INTERVAL_MS = 2000
     DEBOUNCE_MS = 250
@@ -46,7 +46,7 @@ class ImageRepository(QObject):
         if app is not None:
             app.applicationStateChanged.connect(self._on_app_state)
 
-    # ---- dışa açık ------------------------------------------------------- #
+    # ---- public ---------------------------------------------------------- #
     @property
     def images(self) -> List[str]:
         return list(self._images)
@@ -64,7 +64,7 @@ class ImageRepository(QObject):
         self._poll.start()
 
     def refresh(self, force: bool = False) -> bool:
-        """Klasörleri tarar; liste ya da dosya içerikleri değiştiyse changed yayar."""
+        """Scans the folders; emits changed if the list or file contents changed."""
         if self._project is None:
             return False
         snapshot = self._scan()
@@ -76,7 +76,7 @@ class ImageRepository(QObject):
         self.changed.emit(self.images)
         return True
 
-    # ---- iç -------------------------------------------------------------- #
+    # ---- internal -------------------------------------------------------- #
     def _scan(self) -> Snapshot:
         snap: Snapshot = {}
         for path in self._project.list_images():
@@ -84,11 +84,11 @@ class ImageRepository(QObject):
                 st = os.stat(path)
                 snap[path] = (st.st_mtime, st.st_size)
             except OSError:
-                pass   # tarama sırasında silinmiş
+                pass   # deleted during the scan
         return snap
 
     def _watch_targets(self) -> List[str]:
-        # Proje kökü de izlenir: images/ sonradan oluşturulursa ya da silinirse haberimiz olsun
+        # the project root is watched too: so we notice if images/ is created or deleted later
         dirs = [self._project.root] + self._project.image_search_dirs()
         return [d for d in dict.fromkeys(dirs) if os.path.isdir(d)]
 

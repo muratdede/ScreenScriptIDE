@@ -1,12 +1,12 @@
-"""Script'ten bildirim gönderme (push_notification).
+"""Sending notifications from a script (push_notification).
 
-Notifier         : Bildirim gönderen soyut arayüz. send(content, caption) — metin ya da görsel.
-NullNotifier     : Yapılandırılmamış proje için; her gönderimde NotificationError fırlatır.
-TelegramNotifier : Telegram Bot API. Kullanıcı adını, bota yazmış kişiler arasından chat_id'ye
-                   çevirir (getUpdates) ve bulunan ID'yi önbellek dosyasına yazar.
+Notifier         : Abstract interface that sends notifications. send(content, caption) — text or image.
+NullNotifier     : For unconfigured projects; raises NotificationError on every send.
+TelegramNotifier : Telegram Bot API. Resolves the username to a chat_id among the people who wrote to
+                   the bot (getUpdates) and writes the found ID to the cache file.
 
-Telegram'da bir bot, kendisine hiç yazmamış birine mesaj atamaz. Bildirim alacak kişi bir kez
-botu açıp Start'a basmalıdır.
+In Telegram a bot cannot message someone who has never written to it. The person receiving
+notifications must open the bot once and press Start.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from typing import Any, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
+from ...i18n import tr
 from .errors import NotificationError
 
 log = logging.getLogger("script")
@@ -34,11 +35,11 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".webp")
 
 
 class Notifier(ABC):
-    """Bildirim kanalı. Metin için sendMessage, görsel için sendPhoto benzeri davranır."""
+    """Notification channel. Behaves like sendMessage for text and sendPhoto for images."""
 
     def send(self, content: Any, caption: Optional[str] = None) -> None:
-        """content: str (metin), görsel dosya yolu, np.ndarray (BGR), PNG/JPEG bytes ya da
-        capture() metodu olan bir nesne (Region, Match, SCREEN)."""
+        """content: str (text), image file path, np.ndarray (BGR), PNG/JPEG bytes or an object
+        with a capture() method (Region, Match, SCREEN)."""
         photo = self._as_photo(content)
         if photo is None:
             text = str(content) if caption is None else f"{caption}\n{content}"
@@ -54,13 +55,13 @@ class Notifier(ABC):
 
     @staticmethod
     def _as_photo(content: Any) -> Optional[Tuple[bytes, str]]:
-        """İçerik bir görselse (bayt verisi, dosya adı) döndürür; metinse None."""
+        """Returns (byte data, file name) if the content is an image; None if it is text."""
         if hasattr(content, "capture") and callable(content.capture):
             content = content.capture()
         if isinstance(content, np.ndarray):
             ok, buf = cv2.imencode(".png", content)
             if not ok:
-                raise NotificationError("Görsel PNG'ye çevrilemedi")
+                raise NotificationError(tr("Image could not be converted to PNG"))
             return buf.tobytes(), "screen.png"
         if isinstance(content, (bytes, bytearray)):
             return bytes(content), "image.png"
@@ -72,29 +73,31 @@ class Notifier(ABC):
                 with open(path, "rb") as f:
                     return f.read(), os.path.basename(path)
             except OSError as e:
-                raise NotificationError(f"Görsel okunamadı: {path} ({e})") from e
+                raise NotificationError(tr("Image could not be read: {path} ({error})", path=path, error=e)) from e
         return None
 
 
 class NullNotifier(Notifier):
-    """Bildirim ayarı yapılmamış projelerde kullanılır."""
+    """Used by projects without notification settings."""
 
-    MESSAGE = ("Bildirim yapılandırılmamış: proje ayarlarında Telegram bot token'ı ve "
-               "kullanıcı adını girin")
+    @staticmethod
+    def message() -> str:
+        return tr("Notifications are not configured: enter the Telegram bot token and username "
+                  "in the settings")
 
     def send_text(self, text: str) -> None:
-        raise NotificationError(self.MESSAGE)
+        raise NotificationError(self.message())
 
     def send_photo(self, data: bytes, filename: str, caption: Optional[str] = None) -> None:
-        raise NotificationError(self.MESSAGE)
+        raise NotificationError(self.message())
 
 
 class TelegramNotifier(Notifier):
-    """Telegram Bot API ile tek bir kullanıcıya bildirim gönderir.
+    """Sends notifications to a single user via the Telegram Bot API.
 
-    username  : "@kullanici" ya da "kullanici"; doğrudan sayısal chat_id de verilebilir.
-    cache_path: Bulunan chat_id'lerin saklandığı JSON dosyası. getUpdates sadece son ~24 saatin
-                mesajlarını döndürdüğü için, ID bir kez bulununca buradan okunur.
+    username  : "@user" or "user"; a numeric chat_id can be given directly as well.
+    cache_path: JSON file storing found chat_ids. Since getUpdates only returns messages of the last
+                ~24 hours, once found the ID is read from here.
     """
 
     API = "https://api.telegram.org/bot{token}/{method}"
@@ -104,9 +107,9 @@ class TelegramNotifier(Notifier):
     def __init__(self, token: str, username: str, cache_path: Optional[str] = None,
                  timeout: float = 15.0):
         if not token:
-            raise NotificationError("Telegram bot token'ı boş")
+            raise NotificationError(tr("Telegram bot token is empty"))
         if not username:
-            raise NotificationError("Telegram kullanıcı adı boş")
+            raise NotificationError(tr("Telegram username is empty"))
         self._token = token
         self._username = username.strip().lstrip("@")
         self._cache_path = cache_path
@@ -114,7 +117,7 @@ class TelegramNotifier(Notifier):
         self._chat_id: Optional[int] = None
         self._lock = threading.Lock()
 
-    # ---- gönderim ------------------------------------------------------- #
+    # ---- sending --------------------------------------------------------- #
     def send_text(self, text: str) -> None:
         for i in range(0, max(len(text), 1), self.TEXT_LIMIT):
             self._call("sendMessage", {"chat_id": self.chat_id(), "text": text[i:i + self.TEXT_LIMIT]})
@@ -130,13 +133,13 @@ class TelegramNotifier(Notifier):
             self.send_text(rest)
 
     def get_updates(self, offset: int = 0, timeout: int = 0) -> list:
-        """getUpdates (long polling). timeout > 0 ise bağlantı zaman aşımı bundan uzun olmalıdır."""
+        """getUpdates (long polling). If timeout > 0 the connection timeout must be longer than it."""
         fields: Dict[str, Any] = {"timeout": timeout, "allowed_updates": '["message"]'}
         if offset:
             fields["offset"] = offset
         return self._call("getUpdates", fields) or []
 
-    # ---- chat_id çözümleme ---------------------------------------------- #
+    # ---- chat_id resolution ---------------------------------------------- #
     def chat_id(self) -> int:
         with self._lock:
             if self._chat_id is None:
@@ -153,17 +156,18 @@ class TelegramNotifier(Notifier):
 
         found = self._chats_from_updates()
         if key not in found:
-            known = ", ".join("@" + n for n in sorted(found)) or "yok"
-            raise NotificationError(
-                f"@{self._username} botla konuşma başlatmamış. Kullanıcının Telegram'da botu açıp "
-                f"Start'a basması gerekiyor. (Son 24 saatte bota yazanlar: {known})")
+            known = ", ".join("@" + n for n in sorted(found)) or tr("none")
+            raise NotificationError(tr(
+                "@{user} has not started a conversation with the bot. The user needs to open the bot in "
+                "Telegram and press Start. (People who wrote to the bot in the last 24 hours: {known})",
+                user=self._username, known=known))
         cache.update(found)
         self._save_cache(cache)
         log.info("Telegram: @%s -> chat_id %s", self._username, found[key])
         return found[key]
 
     def _chats_from_updates(self) -> Dict[str, int]:
-        """Bota yazmış kişiler: {küçük harf kullanıcı adı: chat_id}."""
+        """People who wrote to the bot: {lowercase username: chat_id}."""
         out: Dict[str, int] = {}
         for update in self._call("getUpdates", {}):
             for kind in ("message", "edited_message", "my_chat_member", "callback_query"):
@@ -177,7 +181,7 @@ class TelegramNotifier(Notifier):
         return out
 
     def remember_chat(self, username: str, chat_id: int) -> None:
-        """Bulunan chat_id'yi önbelleğe yazar (getUpdates'i başkası tüketiyorsa çözümleme buradan yapılır)."""
+        """Writes a found chat_id to the cache (resolution uses it when someone else consumes getUpdates)."""
         cache = self._load_cache()
         key = username.strip().lstrip("@").lower()
         if cache.get(key) != chat_id:
@@ -192,7 +196,7 @@ class TelegramNotifier(Notifier):
                 data = json.load(f)
             return {str(k).lower(): int(v) for k, v in data.items()}
         except (OSError, ValueError, TypeError, AttributeError):
-            log.warning("Telegram önbelleği okunamadı: %s", self._cache_path)
+            log.warning(tr("Telegram cache could not be read: %s"), self._cache_path)
             return {}
 
     def _save_cache(self, cache: Dict[str, int]) -> None:
@@ -202,7 +206,7 @@ class TelegramNotifier(Notifier):
             with open(self._cache_path, "w", encoding="utf-8") as f:
                 json.dump(cache, f, indent=2, ensure_ascii=False)
         except OSError as e:
-            log.warning("Telegram önbelleği yazılamadı: %s (%s)", self._cache_path, e)
+            log.warning(tr("Telegram cache could not be written: %s (%s)"), self._cache_path, e)
 
     # ---- HTTP ------------------------------------------------------------ #
     def _call(self, method: str, fields: Dict[str, Any],
@@ -223,11 +227,12 @@ class TelegramNotifier(Notifier):
             except ValueError:
                 raise NotificationError(f"Telegram {method}: HTTP {e.code}") from None
         except (urllib.error.URLError, TimeoutError, OSError) as e:
-            raise NotificationError(f"Telegram'a bağlanılamadı ({method}): {e}") from None
+            raise NotificationError(tr("Could not connect to Telegram ({method}): {error}",
+                                       method=method, error=e)) from None
         if not payload.get("ok"):
-            desc = payload.get("description", "bilinmeyen hata")
+            desc = payload.get("description", tr("unknown error"))
             if payload.get("error_code") in (401, 404):
-                desc += " — bot token'ını kontrol edin"
+                desc += tr(" — check the bot token")
             raise NotificationError(f"Telegram {method}: {desc}")
         return payload.get("result")
 

@@ -1,5 +1,5 @@
-"""Proje görselleri: küçük resimler. Çift tık = yeni sekmede aç; koda sürükle = göreli yolu ekle.
-Liste ImageRepository'den gelir."""
+"""Project images: thumbnails. Double click = open in a new tab; drag into code = insert the relative path.
+The list comes from the ImageRepository."""
 
 from __future__ import annotations
 
@@ -10,12 +10,13 @@ from PySide6.QtCore import QMimeData, QSize, Qt, QUrl
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QAbstractItemView, QListView, QListWidget, QListWidgetItem, QMenu
 
+from ...i18n import N_, tr
 from .. import icons
 from .base import DockView
 
 
 class _ImageList(QListWidget):
-    """Sürüklenen öğeler dosya URL'si taşır; kod editörü bunu "images/x.png" olarak ekler."""
+    """Dragged items carry a file URL; the code editor inserts it as "images/x.png"."""
 
     def mimeData(self, items):
         mime = QMimeData()
@@ -28,7 +29,7 @@ class _ImageList(QListWidget):
 
 class ImagesView(DockView):
     view_id = "images"
-    title = "Görseller"
+    title = N_("Images")
     icon_name = "image"
     default_area = Qt.LeftDockWidgetArea
     tab_group = "left"
@@ -52,13 +53,13 @@ class ImagesView(DockView):
         self._list.itemDoubleClicked.connect(self._open)
         self._list.setContextMenuPolicy(Qt.CustomContextMenu)
         self._list.customContextMenuRequested.connect(self._menu)
-        self._thumbs: Dict[str, Tuple[float, QIcon, str]] = {}   # yol -> (mtime, ikon, boyut metni)
+        self._thumbs: Dict[str, Tuple[float, QIcon, str]] = {}   # path -> (mtime, icon, size text)
         self.ctx.images.changed.connect(self._show)
         self._show(self.ctx.images.images)
         return self._list
 
     def title_actions(self):
-        return [self.make_action("refresh", "Yenile", lambda: self.ctx.images.refresh(force=True))]
+        return [self.make_action("refresh", tr("Refresh"), lambda: self.ctx.images.refresh(force=True))]
 
     def _show(self, paths: List[str]) -> None:
         selected = self._list.currentItem().data(Qt.UserRole) if self._list.currentItem() else None
@@ -69,14 +70,14 @@ class ImagesView(DockView):
             label = project.relative(path) if project else os.path.basename(path)
             item = QListWidgetItem(icon, os.path.basename(path))
             item.setData(Qt.UserRole, path)
-            item.setToolTip(f"{label}  ({size_text})\nÇift tık: sekmede aç · Koda sürükle: yolunu ekle")
+            item.setToolTip(f"{label}  ({size_text})\n" + tr("Double click: open in a tab · Drag into code: insert its path"))
             self._list.addItem(item)
             if path == selected:
                 self._list.setCurrentItem(item)
-        self.setWindowTitle(f"Görseller ({len(paths)})")
+        self.setWindowTitle(f"{self.title} ({len(paths)})")
 
     def _thumbnail(self, path: str):
-        """Değişmeyen dosyaların küçük resmini tekrar üretme."""
+        """Don't regenerate thumbnails of unchanged files."""
         try:
             mtime = os.path.getmtime(path)
         except OSError:
@@ -86,7 +87,7 @@ class ImagesView(DockView):
             return cached[1], cached[2]
         pm = QPixmap(path)
         icon = QIcon(pm.scaled(self.THUMB, Qt.KeepAspectRatio, Qt.SmoothTransformation)) if not pm.isNull() else QIcon()
-        size_text = f"{pm.width()}x{pm.height()}" if not pm.isNull() else "okunamadı"
+        size_text = f"{pm.width()}x{pm.height()}" if not pm.isNull() else tr("unreadable")
         self._thumbs[path] = (mtime, icon, size_text)
         return icon, size_text
 
@@ -108,11 +109,11 @@ class ImagesView(DockView):
         item = self._list.itemAt(pos)
         menu = QMenu(self)
         if item:
-            menu.addAction(icons.icon("image"), "Sekmede aç", lambda: self._open(item))
-            menu.addAction("Koda ekle (yol)", lambda: self._insert(item, False))
-            menu.addAction("Koda ekle (Pattern + eşik)", lambda: self._insert(item, True))
-            menu.addAction(icons.icon("match"), "Ekran görüntüsünde test et",
+            menu.addAction(icons.icon("image"), tr("Open in tab"), lambda: self._open(item))
+            menu.addAction(tr("Insert into code (path)"), lambda: self._insert(item, False))
+            menu.addAction(tr("Insert into code (Pattern + threshold)"), lambda: self._insert(item, True))
+            menu.addAction(icons.icon("match"), tr("Test on screenshot"),
                            lambda: self.ctx.bus.pattern_test_requested.emit(item.data(Qt.UserRole)))
             menu.addSeparator()
-        menu.addAction(icons.icon("refresh"), "Yenile", lambda: self.ctx.images.refresh(force=True))
+        menu.addAction(icons.icon("refresh"), tr("Refresh"), lambda: self.ctx.images.refresh(force=True))
         menu.exec(self._list.viewport().mapToGlobal(pos))

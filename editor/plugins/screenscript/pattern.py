@@ -1,4 +1,4 @@
-"""Pattern (aranacak görsel) ve görsellerin diskten bulunup önbelleğe alınması."""
+"""Pattern (image to search) and locating images on disk + caching them."""
 
 from __future__ import annotations
 
@@ -9,11 +9,12 @@ from typing import Dict, List, Optional, Tuple, Union
 import cv2
 import numpy as np
 
+from ...i18n import tr
 from .errors import ImageNotFound
 
 
 class Pattern:
-    """Aranacak görsel + eşleşme ayarları. Değişmezdir; ayar metotları yeni Pattern döndürür.
+    """Image to search + matching settings. Immutable; setting methods return a new Pattern.
 
         Pattern("button.png").similar(0.9).target_offset(10, 0)
     """
@@ -21,13 +22,13 @@ class Pattern:
     def __init__(self, image: Union[str, np.ndarray], similarity: Optional[float] = None,
                  offset: Tuple[int, int] = (0, 0), name: Optional[str] = None):
         if similarity is not None and not 0.0 < similarity <= 1.0:
-            raise ValueError("similarity 0 ile 1 arasında olmalı")
+            raise ValueError(tr("similarity must be between 0 and 1"))
         self._image = image
         self._similarity = similarity
         self._offset = offset
         self._name = name or (image if isinstance(image, str) else "<ndarray>")
 
-    # ---- fluent ayarlar -------------------------------------------------- #
+    # ---- fluent settings ------------------------------------------------- #
     def similar(self, similarity: float) -> "Pattern":
         return Pattern(self._image, similarity, self._offset, self._name)
 
@@ -35,17 +36,17 @@ class Pattern:
         return self.similar(0.99)
 
     def target_offset(self, dx: int, dy: int) -> "Pattern":
-        """Tıklama noktasını eşleşmenin merkezinden (dx, dy) kaydırır."""
+        """Shifts the click point by (dx, dy) from the center of the match."""
         return Pattern(self._image, self._similarity, (dx, dy), self._name)
 
-    # ---- özellikler ------------------------------------------------------ #
+    # ---- properties ------------------------------------------------------ #
     @property
     def source(self) -> Union[str, np.ndarray]:
         return self._image
 
     @property
     def similarity(self) -> Optional[float]:
-        """None ise Settings.min_similarity kullanılır."""
+        """If None, Settings.min_similarity is used."""
         return self._similarity
 
     @property
@@ -61,12 +62,12 @@ class Pattern:
         return target if isinstance(target, Pattern) else cls(target)
 
     def __repr__(self) -> str:
-        sim = f"{self._similarity:.2f}" if self._similarity is not None else "varsayılan"
+        sim = f"{self._similarity:.2f}" if self._similarity is not None else "default"
         return f"Pattern({self._name!r}, similar={sim}, offset={self._offset})"
 
 
 class ImagePath:
-    """Görsel arama yolları (SikuliX'teki ImagePath). Göreli adlar sırayla bu klasörlerde aranır."""
+    """Image search paths (ImagePath in SikuliX). Relative names are searched in these folders in order."""
 
     def __init__(self, dirs: Optional[List[str]] = None):
         self._dirs: List[str] = []
@@ -91,11 +92,12 @@ class ImagePath:
                 p = os.path.join(base, n)
                 if os.path.isfile(p):
                     return os.path.abspath(p)
-        raise ImageNotFound(f"Görsel bulunamadı: {name!r}. Aranan klasörler: {[os.getcwd()] + self._dirs}")
+        raise ImageNotFound(tr("Image not found: {name!r}. Searched folders: {dirs}",
+                               name=name, dirs=[os.getcwd()] + self._dirs))
 
 
 class ImageLibrary:
-    """Pattern -> numpy görüntü. Dosya değişirse (mtime) yeniden yükler."""
+    """Pattern -> numpy image. Reloads when the file changes (mtime)."""
 
     def __init__(self, image_path: ImagePath):
         self._path = image_path
@@ -116,10 +118,10 @@ class ImageLibrary:
             cached = self._cache.get(path)
             if cached and cached[0] == mtime:
                 return cached[1]
-        # cv2.imread Windows'ta Türkçe karakterli yollarda sorun çıkarır; imdecode güvenli
+        # cv2.imread fails on Windows for paths with non-ASCII characters; imdecode is safe
         img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
         if img is None:
-            raise ImageNotFound(f"Görsel okunamadı: {path}")
+            raise ImageNotFound(tr("Image could not be read: {path}", path=path))
         img = self._to_bgr(img)
         with self._lock:
             self._cache[path] = (mtime, img)

@@ -1,4 +1,4 @@
-"""Görüntü kaynakları. Yeni bir kaynak eklemek için FrameSource'tan türetin."""
+"""Image sources. Derive from FrameSource to add a new source."""
 
 from __future__ import annotations
 
@@ -9,17 +9,18 @@ from enum import Enum
 import cv2
 import numpy as np
 
+from ...i18n import tr
 from .adb import AdbDevice, AdbError
 
 log = logging.getLogger(__name__)
 
 
 class CaptureError(RuntimeError):
-    """Bir kareyi yakalarken oluşan hata."""
+    """Error while capturing a frame."""
 
 
 class FrameSource(ABC):
-    """Tüm görüntü kaynaklarının arayüzü."""
+    """Interface of all image sources."""
 
     @property
     @abstractmethod
@@ -27,16 +28,16 @@ class FrameSource(ABC):
 
     @abstractmethod
     def grab(self) -> np.ndarray:
-        """Tek bir kare yakalar ve BGR numpy dizisi döndürür. Hata durumunda CaptureError fırlatır."""
+        """Captures a single frame and returns a BGR numpy array. Raises CaptureError on failure."""
 
     def open(self) -> None:
-        """Kaynağı kullanıma hazırlar."""
+        """Prepares the source for use."""
 
     def close(self) -> None:
-        """Kaynağı serbest bırakır."""
+        """Releases the source."""
 
     def recover(self) -> None:
-        """Art arda hatalardan sonra çağrılır; kaynak kendini toparlamayı dener."""
+        """Called after consecutive errors; the source tries to recover itself."""
 
     def __enter__(self):
         self.open()
@@ -47,13 +48,13 @@ class FrameSource(ABC):
 
 
 class ScreencapFormat(Enum):
-    RAW = "raw"   # Sıkıştırmasız RGBA — cihazda PNG kodlaması yok, genelde 2-3 kat daha hızlı
-    PNG = "png"   # Daha az veri aktarılır ama cihazda kodlama yavaş
-    STREAM = "stream"   # screenrecord H.264 akışı (stream.AdbStreamSource) — 1080p'de ~35 FPS
+    RAW = "raw"   # uncompressed RGBA — no PNG encoding on the device, usually 2-3 times faster
+    PNG = "png"   # less data is transferred but encoding on the device is slow
+    STREAM = "stream"   # screenrecord H.264 stream (stream.AdbStreamSource) — ~35 FPS at 1080p
 
 
 class AdbScreencapSource(FrameSource):
-    """`adb exec-out screencap` ile ekran görüntüsü alır."""
+    """Takes screenshots with `adb exec-out screencap`."""
 
     def __init__(self, device: AdbDevice, fmt: ScreencapFormat = ScreencapFormat.RAW):
         self._device = device
@@ -82,23 +83,24 @@ class AdbScreencapSource(FrameSource):
         except AdbError as e:
             raise CaptureError(str(e)) from e
 
-    # ---- çözücüler ------------------------------------------------------- #
+    # ---- decoders -------------------------------------------------------- #
     @staticmethod
     def _decode_png(data: bytes) -> np.ndarray:
         img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
         if img is None:
-            raise CaptureError("PNG çözülemedi (boş ya da bozuk veri).")
+            raise CaptureError(tr("PNG could not be decoded (empty or corrupt data)."))
         return img
 
     @staticmethod
     def _decode_raw(data: bytes) -> np.ndarray:
-        # Başlık: width, height, format (+ Android 9+'da colorspace), hepsi little-endian uint32
+        # header: width, height, format (+ colorspace on Android 9+), all little-endian uint32
         if len(data) < 12:
-            raise CaptureError(f"screencap verisi çok kısa ({len(data)} bayt).")
+            raise CaptureError(tr("screencap data is too short ({size} bytes).", size=len(data)))
         width, height = np.frombuffer(data[:8], dtype="<u4")
         pixel_bytes = int(width) * int(height) * 4
         header = len(data) - pixel_bytes
         if header not in (12, 16):
-            raise CaptureError(f"Beklenmeyen screencap boyutu: {len(data)} bayt, {width}x{height}.")
+            raise CaptureError(tr("Unexpected screencap size: {size} bytes, {width}x{height}.",
+                                  size=len(data), width=width, height=height))
         rgba = np.frombuffer(data, dtype=np.uint8, offset=header).reshape((height, width, 4))
         return cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)

@@ -1,8 +1,8 @@
-"""Kapsamlı klavye kısayolu yardımcısı.
+"""Scoped keyboard shortcut helper.
 
-Dikkat: PySide6'da QShortcut(key, parent, slot, context=...) yapıcısı context argümanını yok sayar ve
-kısayol pencere geneli (WindowShortcut) olur. Böylece örneğin proje ağacındaki "Return" kısayolu
-editördeki Enter'ı da yutar. Kapsamı her zaman bu fonksiyonla, setContext ile verin.
+Note: in PySide6 the QShortcut(key, parent, slot, context=...) constructor ignores the context argument
+and the shortcut becomes window-wide (WindowShortcut). Then e.g. the "Return" shortcut of the project
+tree also swallows Enter in the editor. Always set the scope with this function, via setContext.
 """
 
 from __future__ import annotations

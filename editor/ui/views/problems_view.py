@@ -1,4 +1,4 @@
-"""Sorunlar: projedeki hata ve uyarıların dosyalara göre listesi (IntelliJ'deki Problems)."""
+"""Problems: list of the project's errors and warnings grouped by file (Problems in IntelliJ)."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QLabel, QStackedWidget, QTreeWidget, QTreeWidgetItem
 
 from ...core.diagnostics import Diagnostic, counts
+from ...i18n import N_, ntr, tr
 from .. import icons
 from ..code_editor import CodeEditor
 from ..theme import THEME
@@ -21,7 +22,7 @@ _DIAG_ROLE = Qt.UserRole + 1
 
 class ProblemsView(DockView):
     view_id = "problems"
-    title = "Sorunlar"
+    title = N_("Problems")
     icon_name = "warning"
     default_area = Qt.BottomDockWidgetArea
     tab_group = "bottom"
@@ -30,17 +31,17 @@ class ProblemsView(DockView):
 
     def build(self):
         self._stack = QStackedWidget()
-        self._empty = QLabel("Sorun bulunamadı", alignment=Qt.AlignCenter)
+        self._empty = QLabel(tr("No problems found"), alignment=Qt.AlignCenter)
         self._empty.setObjectName("hint")
         self._tree = QTreeWidget()
         self._tree.setHeaderHidden(True)
         self._tree.setUniformRowHeights(True)
         self._tree.setIndentation(14)
-        self._tree.itemClicked.connect(lambda item, _c: self._activate(item, focus=False))   # tek tık: satıra git
-        self._tree.itemActivated.connect(lambda item, _c: self._activate(item, focus=True))  # çift tık / Enter
+        self._tree.itemClicked.connect(lambda item, _c: self._activate(item, focus=False))   # single click: go to the line
+        self._tree.itemActivated.connect(lambda item, _c: self._activate(item, focus=True))  # double click / Enter
         self._stack.addWidget(self._empty)
         self._stack.addWidget(self._tree)
-        self._files: Dict[str, QTreeWidgetItem] = {}   # normcase yol -> dosya öğesi
+        self._files: Dict[str, QTreeWidgetItem] = {}   # normcase path -> file item
         self._show_warnings = True
 
         store = self.ctx.diagnostics
@@ -50,14 +51,14 @@ class ProblemsView(DockView):
         return self._stack
 
     def title_actions(self):
-        self._warnings_action = self.make_action("warning", "Uyarıları göster", self._toggle_warnings,
+        self._warnings_action = self.make_action("warning", tr("Show warnings"), self._toggle_warnings,
                                                  THEME.warning.name())
         self._warnings_action.setCheckable(True)
         self._warnings_action.setChecked(True)
         return [self._warnings_action,
-                self.make_action("refresh", "Projeyi yeniden denetle", self.ctx.diagnostics.recheck_all)]
+                self.make_action("refresh", tr("Re-inspect the project"), self.ctx.diagnostics.recheck_all)]
 
-    # ---- liste ----------------------------------------------------------- #
+    # ---- list ------------------------------------------------------------ #
     def _toggle_warnings(self, checked: bool):
         self._show_warnings = checked
         self._rebuild()
@@ -104,7 +105,7 @@ class ProblemsView(DockView):
         project = self.ctx.project
         rel = project.relative(os.path.dirname(path)) if project and project.contains(path) else os.path.dirname(path)
         errors, warnings = counts(items)
-        summary = ", ".join(s for s in (f"{errors} hata" if errors else "", f"{warnings} uyarı" if warnings else "") if s)
+        summary = _summary(errors, warnings)
         where = "" if rel in (".", "") else f"   {rel}"
         file_item.setText(0, f"{os.path.basename(path)}{where}   —   {summary}")
         file_item.setIcon(0, icons.file_icon(path))
@@ -120,16 +121,15 @@ class ProblemsView(DockView):
 
     def _refresh_title(self):
         errors, warnings = self.ctx.diagnostics.totals()
-        parts = [f"{errors} hata" if errors else "", f"{warnings} uyarı" if warnings else ""]
-        detail = ", ".join(p for p in parts if p)
-        self.setWindowTitle(f"Sorunlar ({detail})" if detail else "Sorunlar")
+        detail = _summary(errors, warnings)
+        self.setWindowTitle(f"{self.title} ({detail})" if detail else self.title)
         self._stack.setCurrentWidget(self._tree if self._files else self._empty)
 
-    # ---- gezinme --------------------------------------------------------- #
+    # ---- navigation ------------------------------------------------------ #
     def _activate(self, item: QTreeWidgetItem, focus: bool = True):
-        """Sorunun satırına git. Tek tıkta odak listede kalır (ok tuşlarıyla gezmeye devam edilebilir)."""
+        """Go to the problem's line. On a single click the focus stays in the list (arrow keys keep navigating)."""
         diag: Diagnostic = item.data(0, _DIAG_ROLE)
-        if diag is None:   # dosya satırı: aç/kapat ağacın kendi davranışı (ok / çift tık)
+        if diag is None:   # file row: expand/collapse is the tree's own behavior (arrow / double click)
             return
         docs = self.ctx.documents
         editor = docs.open_path(item.data(0, _PATH_ROLE)) if docs else None
@@ -139,3 +139,10 @@ class ProblemsView(DockView):
                 editor.setFocus()
             else:
                 self._tree.setFocus()
+
+
+def _summary(errors: int, warnings: int) -> str:
+    """"2 errors, 1 warning" (empty parts are left out)."""
+    parts = [ntr("{n} error", "{n} errors", errors) if errors else "",
+             ntr("{n} warning", "{n} warnings", warnings) if warnings else ""]
+    return ", ".join(p for p in parts if p)

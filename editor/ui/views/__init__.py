@@ -1,5 +1,5 @@
-"""Yerleşik view'lar. Yeni view eklemek için DockView'dan türetip DEFAULT_VIEWS'e ekleyin
-(ya da MainWindow(view_classes=[...]) ile verin)."""
+"""Built-in views. To add a new view, derive from DockView and add it to DEFAULT_VIEWS
+(or pass it with MainWindow(view_classes=[...]))."""
 
 from .base import DockView
 from .console_view import ConsoleView

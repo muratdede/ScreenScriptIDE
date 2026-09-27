@@ -1,12 +1,13 @@
-"""Editör içinden cihaz ekran görüntüsü alma (arka plan thread'inde).
+"""Taking device screenshots from inside the editor (on a background thread).
 
-İki kip:
-  grab(config)        — tek kare
-  start_live(config)  — durdurulana kadar sürekli yakalar (canlı görüntü); stop_live() ile durur.
-Canlı kipte UI yavaş kalırsa kareler kuyrukta birikmez: her zaman yalnızca en son kare teslim edilir.
+Two modes:
+  grab(config)        — a single frame
+  start_live(config)  — captures continuously until stopped (live view); stops with stop_live().
+In live mode frames do not pile up if the UI is slow: only the latest frame is ever delivered.
 
-"stream" biçiminde (screenrecord H.264) canlı görüntü kareleri geldikçe iletir (~35 FPS). Akışın açılması
-~2 sn sürdüğü için Durdur'dan sonra akış bir süre (STREAM_IDLE_SECONDS) açık tutulur; Devam anında başlar.
+In "stream" format (screenrecord H.264) the live view delivers frames as they arrive (~35 FPS). Since
+opening the stream takes ~2 s, the stream is kept open for a while (STREAM_IDLE_SECONDS) after Stop;
+resuming starts instantly.
 """
 
 from __future__ import annotations
@@ -28,10 +29,10 @@ class ScreenGrabber(QObject):
     failed = Signal(str)
     busy_changed = Signal(bool)
     live_changed = Signal(bool)
-    _frame_pending = Signal()  # thread -> UI thread köprüsü (kuyruklu bağlantı)
+    _frame_pending = Signal()  # thread -> UI thread bridge (queued connection)
 
-    LIVE_MIN_INTERVAL = 0.05   # screencap kipi: cihazı gereksiz yormamak için üst sınır ~20 FPS
-    STREAM_IDLE_SECONDS = 60   # canlı durdurulunca akış bu kadar açık kalır
+    LIVE_MIN_INTERVAL = 0.05   # screencap mode: upper limit ~20 FPS so the device is not overloaded
+    STREAM_IDLE_SECONDS = 60   # the stream stays open this long after the live view stops
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -57,7 +58,7 @@ class ScreenGrabber(QObject):
     def is_live(self) -> bool:
         return self._live_stop is not None
 
-    # ---- tek kare -------------------------------------------------------- #
+    # ---- single frame ---------------------------------------------------- #
     def grab(self, config: AppConfig) -> None:
         if self._busy or self.is_live:
             return
@@ -65,11 +66,11 @@ class ScreenGrabber(QObject):
         threading.Thread(target=self._work_once, args=(config,), daemon=True).start()
 
     def capture(self, config: AppConfig):
-        """Tek kareyi eşzamanlı döndürür (sinyal yaymaz; arka plan thread'lerinden çağrılır)."""
+        """Returns a single frame synchronously (emits no signal; called from background threads)."""
         stream = self._stream
         if stream is not None and stream.streaming and self._stream_key == self._key(config):
-            return stream.grab()   # akış zaten açık: son kare anında
-        # tek kare için akış açmaya (~2 sn) değmez; screencap
+            return stream.grab()   # the stream is already open: latest frame instantly
+        # not worth opening a stream (~2 s) for a single frame; screencap
         fmt = ScreencapFormat(config.screencap_format)
         source = AdbScreencapSource(self._get_device(config),
                                     ScreencapFormat.RAW if fmt is ScreencapFormat.STREAM else fmt)
@@ -85,7 +86,7 @@ class ScreenGrabber(QObject):
         finally:
             self._set_busy(False)
 
-    # ---- canlı ----------------------------------------------------------- #
+    # ---- live ------------------------------------------------------------ #
     def start_live(self, config: AppConfig) -> None:
         if self.is_live:
             return
@@ -136,13 +137,13 @@ class ScreenGrabber(QObject):
             if not stop.is_set():
                 stop.set()
                 self.failed.emit(str(e))
-                self._frame_pending.emit()   # UI thread'inde canlı durumunu kapatmak için
+                self._frame_pending.emit()   # to turn off the live state on the UI thread
 
     def _work_stream(self, source: AdbStreamSource, stop: threading.Event) -> None:
-        """Akıştan kareler geldikçe iletir. Ekran değişmiyorsa kare gelmez (FPS 0 görünür)."""
+        """Delivers frames from the stream as they arrive. No frames come if the screen doesn't change (FPS shows 0)."""
         stamps = deque(maxlen=60)
         index = 0
-        first = source.grab()   # ilk kare (gerekirse screencap yedeği)
+        first = source.grab()   # first frame (screencap fallback if needed)
         if not stop.is_set():
             self._push(first)
         index = source.frame_index
@@ -161,7 +162,7 @@ class ScreenGrabber(QObject):
             self.fps = float(len(stamps))
             self._push(image)
 
-    # ---- ortak ----------------------------------------------------------- #
+    # ---- common ---------------------------------------------------------- #
     @staticmethod
     def _key(config: AppConfig) -> Tuple:
         return (config.host, int(config.port), config.adb_path)
@@ -196,8 +197,8 @@ class ScreenGrabber(QObject):
             self._stream_idle.start()
 
     def close_stream(self) -> None:
-        """Açık akışı kapatır (boşta kalınca, proje değişince, uygulamadan çıkarken).
-        Canlı görüntü sürüyorsa kapatılmaz."""
+        """Closes the open stream (when idle, when the project changes, when quitting).
+        Not closed while the live view is running."""
         with self._stream_lock:
             if self._stream_idle is not None:
                 self._stream_idle.cancel()
@@ -220,7 +221,7 @@ class ScreenGrabber(QObject):
             self._frame_pending.emit()
 
     def _deliver(self) -> None:
-        # canlı thread hata ile bittiyse (stop kendi kendine set edildiyse) durumu güncelle
+        # update the state if the live thread ended with an error (stop was set by itself)
         if self._live_stop is not None and self._live_stop.is_set():
             self.stop_live()
         with self._lock:

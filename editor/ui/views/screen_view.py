@@ -1,4 +1,4 @@
-"""Ekran view'ı: cihaz ekranını yakala, alan seç, görsel kaydet / Region ekle, eşleşmeyi test et."""
+"""Screen view: capture the device screen, select an area, save an image / insert a Region, test matching."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QFrame, Q
 from ...plugins.screenscript import ImageLibrary, ImagePath, Key, Pattern
 
 from ...agent.context_factory import ContextFactory
+from ...i18n import N_, ntr, tr
 from .. import icons
 from .base import DockView
 
@@ -31,18 +32,18 @@ def bgr_to_qimage(image: np.ndarray) -> QImage:
 
 
 class ScreenCanvas(QGraphicsView):
-    """Görüntüyü gösterir; sürükleyerek alan seçilir. Ctrl+tekerlek = yakınlaştır.
-    Tıklayıcı modunda fare ve klavye cihaza girdi olarak gider: tık = dokunma, sürükle = kaydırma,
-    basılı tut = uzun basma, tekerlek = kaydırma, yazı/Enter/Backspace/Esc(=Geri) = tuşlar."""
+    """Shows the image; an area is selected by dragging. Ctrl+wheel = zoom.
+    In clicker mode mouse and keyboard go to the device as input: click = tap, drag = swipe,
+    hold = long press, wheel = scroll, text/Enter/Backspace/Esc(=Back) = keys."""
 
-    selection_changed = Signal(object)   # (x, y, w, h) ya da None
-    hovered = Signal(int, int, object)   # x, y, (b, g, r) ya da None
-    # tıklayıcı modu (koordinatlar cihaz pikseli)
+    selection_changed = Signal(object)   # (x, y, w, h) or None
+    hovered = Signal(int, int, object)   # x, y, (b, g, r) or None
+    # clicker mode (coordinates are device pixels)
     tapped = Signal(int, int)
-    swiped = Signal(int, int, int, int, int)   # x1, y1, x2, y2, süre ms
-    long_pressed = Signal(int, int, int)       # x, y, süre ms
+    swiped = Signal(int, int, int, int, int)   # x1, y1, x2, y2, duration ms
+    long_pressed = Signal(int, int, int)       # x, y, duration ms
     text_typed = Signal(str)
-    key_sent = Signal(int, str)                # keycode, açıklama
+    key_sent = Signal(int, str)                # keycode, description
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -119,8 +120,8 @@ class ScreenCanvas(QGraphicsView):
             self.scene().removeItem(item)
         self._overlays = []
 
-    # ---- tıklayıcı modu: fare/klavye -> cihaz girdisi ------------------- #
-    TAP_SLOP_PX = 8          # ekran pikseli; bundan az hareket = dokunma
+    # ---- clicker mode: mouse/keyboard -> device input ------------------ #
+    TAP_SLOP_PX = 8          # screen pixels; less movement than this = tap
     LONG_PRESS_MS = 500
 
     def set_clicker(self, on: bool) -> None:
@@ -172,7 +173,7 @@ class ScreenCanvas(QGraphicsView):
             self._ripple(x0, y0, QColor(53, 116, 240))
 
     def _ripple(self, x: int, y: int, color: QColor) -> None:
-        """Dokunulan yerde kısa süre görünen halka (sabit ekran boyutunda)."""
+        """A ring briefly shown where it was touched (constant on-screen size)."""
         item = QGraphicsEllipseItem(-14, -14, 28, 28)
         item.setFlag(QGraphicsItem.ItemIgnoresTransformations)
         item.setPos(x, y)
@@ -200,9 +201,9 @@ class ScreenCanvas(QGraphicsView):
     def keyPressEvent(self, e):
         if not self.clicker:
             return super().keyPressEvent(e)
-        keys = {Qt.Key_Backspace: (Key.DEL, "Sil"), Qt.Key_Return: (Key.ENTER, "Enter"),
-                Qt.Key_Enter: (Key.ENTER, "Enter"), Qt.Key_Tab: (Key.TAB, "Tab"), Qt.Key_Escape: (Key.BACK, "Geri"),
-                Qt.Key_Home: (Key.HOME, "Ana ekran")}
+        keys = {Qt.Key_Backspace: (Key.DEL, tr("Delete")), Qt.Key_Return: (Key.ENTER, "Enter"),
+                Qt.Key_Enter: (Key.ENTER, "Enter"), Qt.Key_Tab: (Key.TAB, "Tab"), Qt.Key_Escape: (Key.BACK, tr("Back")),
+                Qt.Key_Home: (Key.HOME, tr("Home screen"))}
         if e.key() in keys:
             self.key_sent.emit(int(keys[e.key()][0]), keys[e.key()][1])
         elif e.text() and e.text().isprintable() and not (e.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
@@ -211,9 +212,9 @@ class ScreenCanvas(QGraphicsView):
             super().keyPressEvent(e)
 
     def focusNextPrevChild(self, _next):
-        return not self.clicker and super().focusNextPrevChild(_next)   # Tab cihaza gitsin
+        return not self.clicker and super().focusNextPrevChild(_next)   # Tab goes to the device
 
-    # ---- fare ------------------------------------------------------------ #
+    # ---- mouse ----------------------------------------------------------- #
     def _clamped(self, pos) -> QPointF:
         p = self.mapToScene(pos)
         r = self.sceneRect()
@@ -262,7 +263,7 @@ class ScreenCanvas(QGraphicsView):
             factor = 1.25 if e.angleDelta().y() > 0 else 0.8
             self.scale(factor, factor)
         elif self.clicker and self._image is not None:
-            # tekerlek = cihazda kaydırma (liste/ sayfa gezinme)
+            # wheel = scrolling on the device (list / page navigation)
             x, y = self._device_point(e.position().toPoint())
             h = self._image.shape[0]
             dy = int(h * 0.18) * (1 if e.angleDelta().y() > 0 else -1)
@@ -272,7 +273,7 @@ class ScreenCanvas(QGraphicsView):
 
 
 class RefreshingComboBox(QComboBox):
-    """Açılır liste açılmadan hemen önce about_to_show yayar; böylece liste her zaman günceldir."""
+    """Emits about_to_show right before the popup opens, so the list is always up to date."""
 
     about_to_show = Signal()
 
@@ -283,7 +284,7 @@ class RefreshingComboBox(QComboBox):
 
 class ScreenView(DockView):
     view_id = "screen"
-    title = "Ekran"
+    title = N_("Screen")
     icon_name = "phone"
     default_area = Qt.RightDockWidgetArea
     tab_group = "right"
@@ -296,57 +297,58 @@ class ScreenView(DockView):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # 1. satır: yakalama ve seçim eylemleri
+        # row 1: capture and selection actions
         bar = QHBoxLayout()
         bar.setContentsMargins(8, 2, 8, 4)
         bar.setSpacing(2)
-        self._live_btn = self._button(bar, "Yakala", "camera", "Cihaz ekranını canlı izle (Ctrl+Shift+G)",
+        self._live_btn = self._button(bar, tr("Capture"), "camera", tr("Watch the device screen live (Ctrl+Shift+G)"),
                                       self.ctx.toggle_live_screen)
-        self._shot_btn = self._button(bar, "", "camera", "Tek kare yakala", self.ctx.grab_screen)
+        self._shot_btn = self._button(bar, "", "camera", tr("Capture a single frame"), self.ctx.grab_screen)
         self._shot_btn.setIcon(icons.icon("refresh"))
-        self._button(bar, "", "folder", "Kayıtlı bir ekran görüntüsünü aç", self._open_file)
+        self._button(bar, "", "folder", tr("Open a saved screenshot"), self._open_file)
         bar.addWidget(self._separator())
-        self._button(bar, "", "fit", "Görüntüyü pencereye sığdır", lambda: self._canvas.fit())
-        self._button(bar, "", "actual", "Gerçek boyut (1:1)", lambda: self._canvas.actual_size())
+        self._button(bar, "", "fit", tr("Fit the image to the window"), lambda: self._canvas.fit())
+        self._button(bar, "", "actual", tr("Actual size (1:1)"), lambda: self._canvas.actual_size())
         bar.addWidget(self._separator())
-        self._clicker_btn = self._button(bar, "Tıklayıcı", "pointer",
-                                         "Tıklayıcı modu: ekrana tıklayınca cihaza dokunma gönderilir, sürükle = "
-                                         "kaydır, basılı tut = uzun bas, tekerlek = kaydır, klavye = yazı", None)
+        self._clicker_btn = self._button(bar, tr("Clicker"), "pointer",
+                                         tr("Clicker mode: clicking the screen sends a tap to the device, drag = "
+                                            "swipe, hold = long press, wheel = scroll, keyboard = text"), None)
         self._clicker_btn.setCheckable(True)
         self._clicker_btn.toggled.connect(self._set_clicker)
         self._nav_buttons = [
-            self._button(bar, "", "back", "Geri (Esc)", lambda: self._send_key(Key.BACK, "Geri")),
-            self._button(bar, "", "home", "Ana ekran", lambda: self._send_key(Key.HOME, "Ana ekran")),
-            self._button(bar, "", "recents", "Son uygulamalar", lambda: self._send_key(Key.APP_SWITCH, "Son uygulamalar")),
+            self._button(bar, "", "back", tr("Back (Esc)"), lambda: self._send_key(Key.BACK, tr("Back"))),
+            self._button(bar, "", "home", tr("Home screen"), lambda: self._send_key(Key.HOME, tr("Home screen"))),
+            self._button(bar, "", "recents", tr("Recent apps"),
+                         lambda: self._send_key(Key.APP_SWITCH, tr("Recent apps"))),
         ]
         bar.addWidget(self._separator())
-        self._save_btn = self._button(bar, "Görsel kaydet", "crop",
-                                      "Seçili alanı images/ klasörüne PNG olarak kaydet", self._save_selection)
+        self._save_btn = self._button(bar, tr("Save image"), "crop",
+                                      tr("Save the selected area as PNG to the images/ folder"), self._save_selection)
         self._region_btn = self._button(bar, "Region", "region",
-                                        "Seçili alanı Region(x, y, w, h) olarak koda ekle", self._insert_region)
-        self._loc_btn = self._button(bar, "Konum", "location",
-                                     "Seçimin merkezini Location(x, y) olarak koda ekle", self._insert_location)
+                                        tr("Insert the selected area into code as Region(x, y, w, h)"), self._insert_region)
+        self._loc_btn = self._button(bar, tr("Location"), "location",
+                                     tr("Insert the center of the selection into code as Location(x, y)"), self._insert_location)
         bar.addStretch()
         layout.addLayout(bar)
 
-        # 2. satır: eşleşme testi
+        # row 2: match test
         self._test_row = QWidget()
         test = QHBoxLayout(self._test_row)
         test.setContentsMargins(8, 0, 8, 6)
         test.setSpacing(4)
         self._pattern_box = RefreshingComboBox()
         self._pattern_box.setMinimumWidth(140)
-        self._pattern_box.setPlaceholderText("Test edilecek görsel")
-        self._pattern_box.setToolTip("Ekran görüntüsünde aranacak görsel")
+        self._pattern_box.setPlaceholderText(tr("Image to test"))
+        self._pattern_box.setToolTip(tr("Image to search on the screenshot"))
         self._pattern_box.about_to_show.connect(lambda: self.ctx.images.refresh())
         test.addWidget(self._pattern_box, 1)
-        label = QLabel("eşik")
+        label = QLabel(tr("threshold"))
         label.setObjectName("hint")
         test.addWidget(label)
         self._sim = QDoubleSpinBox(minimum=0.1, maximum=1.0, singleStep=0.05, decimals=2, value=0.8)
         test.addWidget(self._sim)
-        self._button(test, "Göster", "match", "Seçili görseli bu ekran görüntüsünde ara", self._test_pattern)
-        self._button(test, "", "trash", "İşaretleri kaldır", lambda: self._canvas.clear_matches())
+        self._button(test, tr("Show"), "match", tr("Search the selected image on this screenshot"), self._test_pattern)
+        self._button(test, "", "trash", tr("Remove markers"), lambda: self._canvas.clear_matches())
         layout.addWidget(self._test_row)
 
         self._canvas = ScreenCanvas()
@@ -360,7 +362,7 @@ class ScreenView(DockView):
         c.key_sent.connect(self._send_key)
         c.text_typed.connect(self._queue_text)
         self._text_buffer = ""
-        self._text_timer = QTimer(self, singleShot=True, interval=150)   # hızlı yazılan harfleri tek komutta gönder
+        self._text_timer = QTimer(self, singleShot=True, interval=150)   # send quickly typed letters in one command
         self._text_timer.timeout.connect(self._flush_text)
         self.ctx.device_input.sent.connect(self._on_input_sent)
         self.ctx.device_input.failed.connect(self._on_input_failed)
@@ -369,9 +371,9 @@ class ScreenView(DockView):
         self._status_row = QWidget()
         status = QHBoxLayout(self._status_row)
         status.setContentsMargins(10, 4, 10, 5)
-        self._status = QLabel("Ekran görüntüsü yok. 'Yakala' ile cihazdan canlı alın.")
+        self._status = QLabel(tr("No screenshot. Get it live from the device with 'Capture'."))
         self._status.setObjectName("hint")
-        # uzun mesajlar pencereyi genişletmesin, sığmayan kısım kırpılsın
+        # long messages must not widen the window; what doesn't fit is clipped
         self._status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._pixel = QLabel()
         self._pixel.setObjectName("hint")
@@ -390,7 +392,7 @@ class ScreenView(DockView):
         self.ctx.grabber.live_changed.connect(self._on_live_changed)
         self._failed = False
         self._on_selection(None)
-        # Yakala/Durdur yazısı değişince araç çubuğu (ve ayrık pencere) genişlemesin
+        # the toolbar (and the floating window) must not grow when the Capture/Stop text changes
         widths = []
         for live in (True, False):
             self._on_live_changed(live)
@@ -418,17 +420,17 @@ class ScreenView(DockView):
         return line
 
     def pinned_changed(self, pinned: bool) -> None:
-        # raptiyeli (her zaman üstte) modda yalnızca araç çubuğu ve görüntü kalsın
+        # in pinned (always on top) mode only the toolbar and the image remain
         self._test_row.setVisible(not pinned)
         self._status_row.setVisible(not pinned)
 
-    # ---- tıklayıcı modu -------------------------------------------------- #
+    # ---- clicker mode ---------------------------------------------------- #
     def _set_clicker(self, on: bool) -> None:
         if on and not self.ctx.project:
             self._clicker_btn.setChecked(False)
             return
         self._canvas.set_clicker(on)
-        # önce gizle, sonra göster: iki grup bir an birlikte görünürse pencere genişler
+        # hide first, then show: if both groups are visible for a moment the window grows
         shown, hidden = self._nav_buttons, [self._save_btn, self._region_btn, self._loc_btn]
         if not on:
             shown, hidden = hidden, shown
@@ -439,8 +441,8 @@ class ScreenView(DockView):
             b.setVisible(True)
         if on:
             if not self.ctx.grabber.is_live:
-                self.ctx.toggle_live_screen()     # sonucu görmek için canlı görüntü
-            self._pixel.setText("Tıklayıcı açık — girdiler cihaza gider")
+                self.ctx.toggle_live_screen()     # live view to see the result
+            self._pixel.setText(tr("Clicker on — input goes to the device"))
 
     def _input(self, send) -> None:
         if self.ctx.project and self._canvas.clicker:
@@ -465,36 +467,36 @@ class ScreenView(DockView):
             self._pixel.setText(f"→ {label}")
 
     def _on_input_failed(self, message: str) -> None:
-        self._pixel.setText(f"<span style='color:#f07178'>Girdi gönderilemedi</span>")
-        self.ctx.bus.output.emit(f"Girdi gönderilemedi: {message}\n", "err")
+        self._pixel.setText(f"<span style='color:#f07178'>{tr('Input could not be sent')}</span>")
+        self.ctx.bus.output.emit(tr("Input could not be sent: {error}\n", error=message), "err")
 
     def _on_live_changed(self, live: bool) -> None:
         b = self._live_btn
         if live:
-            b.setText("Durdur")
+            b.setText(tr("Stop"))
             b.setIcon(icons.icon("stop", "#ff8a8a"))
             b.setObjectName("live_on")
-            b.setToolTip("Canlı görüntüyü durdur; son kare ekranda kalır (Ctrl+Shift+G)")
+            b.setToolTip(tr("Stop the live view; the last frame stays on screen (Ctrl+Shift+G)"))
         else:
             has_image = self._canvas.image is not None
-            b.setText("Yakala")
+            b.setText(tr("Capture"))
             b.setIcon(icons.icon("camera"))
             b.setObjectName("")
-            b.setToolTip("Canlı görüntüyü başlat (Ctrl+Shift+G)")
+            b.setToolTip(tr("Start the live view (Ctrl+Shift+G)"))
             if has_image and not self._failed:
                 h, w = self._canvas.image.shape[:2]
-                self._status.setText(f"Durduruldu · {w}×{h}. Alan seçmek için sürükleyin.")
+                self._status.setText(tr("Stopped · {w}×{h}. Drag to select an area.", w=w, h=h))
         b.style().unpolish(b)
         b.style().polish(b)
         self._shot_btn.setEnabled(not live and not self.ctx.grabber.busy)
 
-    # ---- olaylar --------------------------------------------------------- #
+    # ---- events ---------------------------------------------------------- #
     def _on_project(self, project):
         self._sim.setValue(project.config.similarity)
         self._set_patterns(self.ctx.images.images)
 
     def _set_patterns(self, paths):
-        """Listeyi günceller; seçili görsel hâlâ varsa seçili kalır."""
+        """Updates the list; the selected image stays selected if it still exists."""
         box = self._pattern_box
         current = box.currentData()
         project = self.ctx.project
@@ -515,17 +517,17 @@ class ScreenView(DockView):
         h, w = image.shape[:2]
         if live:
             sel = self._canvas.selection()
-            sel_txt = "  ·  seçim: x={} y={} w={} h={}".format(*sel) if sel else ""
-            self._status.setText(f"● Canlı · {w}×{h} · {self.ctx.grabber.fps:.0f} FPS{sel_txt}")
+            sel_txt = "  ·  " + tr("selection: x={} y={} w={} h={}").format(*sel) if sel else ""
+            self._status.setText(f"● {tr('Live')} · {w}×{h} · {self.ctx.grabber.fps:.0f} FPS{sel_txt}")
         else:
-            self._status.setText(f"Ekran: {w}×{h}. Alan seçmek için sürükleyin; Ctrl+tekerlek ile yakınlaştırın.")
+            self._status.setText(tr("Screen: {w}×{h}. Drag to select an area; zoom with Ctrl+wheel.", w=w, h=h))
         if first or not live:
             self.reveal()
 
     def _on_failed(self, message: str):
         self._failed = True
-        self._status.setText(f"<span style='color:#f07178'>Yakalanamadı: {message}</span>")
-        self.ctx.bus.output.emit(f"Ekran yakalanamadı: {message}\n", "err")
+        self._status.setText(f"<span style='color:#f07178'>{tr('Could not capture: {error}', error=message)}</span>")
+        self.ctx.bus.output.emit(tr("Screen could not be captured: {error}\n", error=message), "err")
 
     def _on_selection(self, sel):
         enabled = sel is not None
@@ -533,7 +535,7 @@ class ScreenView(DockView):
             b.setEnabled(enabled)
         if sel and not self.ctx.grabber.is_live:
             x, y, w, h = sel
-            self._status.setText(f"Seçim: x={x} y={y} w={w} h={h}")
+            self._status.setText(tr("Selection: x={x} y={y} w={w} h={h}", x=x, y=y, w=w, h=h))
 
     def _on_hover(self, x, y, color):
         if self._canvas.clicker:
@@ -545,34 +547,34 @@ class ScreenView(DockView):
             self._pixel.clear()
 
     def _open_file(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Ekran görüntüsü aç",
+        path, _ = QFileDialog.getOpenFileName(self, tr("Open screenshot"),
                                               self.ctx.project.root if self.ctx.project else "",
-                                              "Görseller (*.png *.jpg *.jpeg *.bmp)")
+                                              tr("Images") + " (*.png *.jpg *.jpeg *.bmp)")
         if path:
             img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
             if img is None:
-                QMessageBox.warning(self, "Açılamadı", path)
+                QMessageBox.warning(self, tr("Could not be opened"), path)
             else:
                 self._on_screenshot(img)
 
-    # ---- seçim eylemleri ------------------------------------------------- #
+    # ---- selection actions ---------------------------------------------- #
     def _save_selection(self):
         sel, image, project = self._canvas.selection(), self._canvas.image, self.ctx.project
         if not (sel and image is not None and project):
             return
-        name, ok = QInputDialog.getText(self, "Görsel kaydet", "Görsel adı:", text="button")
+        name, ok = QInputDialog.getText(self, tr("Save image"), tr("Image name:"), text="button")
         if not ok or not name.strip():
             return
         x, y, w, h = sel
         path = project.unique_image_path(name.strip())
         ok, buf = cv2.imencode(".png", image[y:y + h, x:x + w])
         if not ok:
-            QMessageBox.warning(self, "Kaydedilemedi", path)
+            QMessageBox.warning(self, tr("Could not be saved"), path)
             return
-        buf.tofile(path)  # Türkçe karakterli yollar için imwrite yerine
+        buf.tofile(path)  # instead of imwrite, for paths with non-ASCII characters
         self.ctx.bus.images_changed.emit()
         self.ctx.bus.insert_text_requested.emit(f'"{os.path.basename(path)}"')
-        self._status.setText(f"Kaydedildi: {project.relative(path)}")
+        self._status.setText(tr("Saved: {path}", path=project.relative(path)))
 
     def _insert_region(self):
         sel = self._canvas.selection()
@@ -585,7 +587,7 @@ class ScreenView(DockView):
             x, y, w, h = sel
             self.ctx.bus.insert_text_requested.emit(f"Location({x + w // 2}, {y + h // 2})")
 
-    # ---- eşleşme testi --------------------------------------------------- #
+    # ---- match test ------------------------------------------------------ #
     def _on_test_requested(self, path: str):
         i = self._pattern_box.findData(path)
         if i < 0:
@@ -596,13 +598,13 @@ class ScreenView(DockView):
         self._test_pattern()
 
     def create_matcher(self):
-        """Script'in kullandığı eşleştiricinin aynısı (her zaman çoklu ölçek)."""
+        """The same matcher the script uses (always multi-scale)."""
         return ContextFactory.create_matcher(self.ctx.project.config)
 
     def _test_pattern(self):
         image, path = self._canvas.image, self._pattern_box.currentData()
         if image is None or not path or not self.ctx.project:
-            self._status.setText("Önce ekran görüntüsü alın ve bir görsel seçin.")
+            self._status.setText(tr("Take a screenshot and select an image first."))
             return
         needle = ImageLibrary(ImagePath()).load(Pattern(path))
         sel = self._canvas.selection()
@@ -613,11 +615,13 @@ class ScreenView(DockView):
         best = matcher.best(haystack, needle)
         found = matcher.find_all(haystack, needle, threshold, max_results=50)
         self._canvas.show_matches([((m.rect.x + x0, m.rect.y + y0, m.rect.w, m.rect.h), m.score) for m in found])
-        where = " (seçili alanda)" if sel else ""
+        where = " " + tr("(in the selected area)") if sel else ""
         best_txt = f"{best.score:.3f}" if best else "-"
         scale_txt = ""
         if best and best.rect.w != needle.shape[1]:
-            scale_txt = f" (ölçek ≈{best.rect.w / needle.shape[1]:.2f}x)"
+            scale_txt = " " + tr("(scale ≈{scale:.2f}x)", scale=best.rect.w / needle.shape[1])
         color = "#98c379" if found else "#e5c07b"
-        self._status.setText(f"<span style='color:{color}'>{os.path.basename(path)}: {len(found)} eşleşme"
-                             f"{where}, en iyi skor {best_txt}{scale_txt}, eşik {threshold:.2f}</span>")
+        summary = tr("{count}{where}, best score {best}{scale}, threshold {threshold:.2f}",
+                     count=ntr("{n} match", "{n} matches", len(found)), where=where, best=best_txt,
+                     scale=scale_txt, threshold=threshold)
+        self._status.setText(f"<span style='color:{color}'>{os.path.basename(path)}: {summary}</span>")

@@ -1,34 +1,38 @@
-"""Script API hataları."""
+"""Script API errors."""
+
+from ...i18n import tr
 
 
 class ScriptError(RuntimeError):
-    """Script API'sindeki tüm hataların tabanı."""
+    """Base of all errors in the script API."""
 
 
 class FindFailed(ScriptError):
-    """Aranan görsel süre içinde bulunamadı (SikuliX'teki FindFailed gibi)."""
+    """The searched image was not found in time (like FindFailed in SikuliX)."""
 
     def __init__(self, target: str, timeout: float, best_score: float):
         self.target = target
         self.timeout = timeout
         self.best_score = best_score
-        super().__init__(f"Bulunamadı: {target} ({timeout:.1f} sn, en iyi skor {best_score:.3f})")
+        super().__init__(tr("Not found: {target} ({timeout:.1f} s, best score {score:.3f})",
+                            target=target, timeout=timeout, score=best_score))
 
 
 class TextNotFound(FindFailed):
-    """Aranan yazı süre içinde okunamadı. `seen`: son okumada bölgede görülen yazılar."""
+    """The searched text could not be read in time. `seen`: texts seen in the region on the last read."""
 
     def __init__(self, query: str, timeout: float, seen: list):
         self.target = query
         self.timeout = timeout
         self.best_score = 0.0
         self.seen = list(seen)
-        ScriptError.__init__(self, f"Yazı bulunamadı: {query} ({timeout:.1f} sn). Okunan: {self.seen}")
+        ScriptError.__init__(self, tr("Text not found: {query} ({timeout:.1f} s). Read: {seen}",
+                                      query=query, timeout=timeout, seen=self.seen))
 
 
 class ImageNotFound(ScriptError):
-    """Pattern'in PNG dosyası diskte bulunamadı."""
+    """The Pattern's PNG file was not found on disk."""
 
 
 class NotificationError(ScriptError):
-    """push_notification gönderilemedi (ayar eksik, kullanıcı bulunamadı, ağ hatası...)."""
+    """push_notification could not be sent (missing setting, user not found, network error...)."""

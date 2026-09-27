@@ -1,4 +1,4 @@
-"""ADB erişimi: adb.exe'yi bulma ve bir cihaza (BlueStacks) komut gönderme."""
+"""ADB access: locating adb.exe and sending commands to a device (BlueStacks)."""
 
 from __future__ import annotations
 
@@ -9,15 +9,17 @@ import subprocess
 import sys
 from typing import Optional
 
+from ...i18n import tr
+
 log = logging.getLogger(__name__)
 
 
 class AdbError(RuntimeError):
-    """ADB ile ilgili tüm hatalar."""
+    """All ADB related errors."""
 
 
 class AdbLocator:
-    """adb çalıştırılabilir dosyasını bulur: verilen yol -> PATH -> BlueStacks'in HD-Adb.exe'si."""
+    """Finds the adb executable: given path -> PATH -> BlueStacks' HD-Adb.exe."""
 
     _REG_KEYS = (r"SOFTWARE\BlueStacks_nxt", r"SOFTWARE\BlueStacks")
     _FOLDERS = ("BlueStacks_nxt", "BlueStacks")
@@ -27,7 +29,7 @@ class AdbLocator:
         if user_path:
             if os.path.isfile(user_path):
                 return user_path
-            raise AdbError(f"adb bulunamadı: {user_path}")
+            raise AdbError(tr("adb not found: {path}", path=user_path))
 
         found = shutil.which("adb")
         if found:
@@ -37,10 +39,9 @@ class AdbLocator:
             if os.path.isfile(candidate):
                 return candidate
 
-        raise AdbError(
-            "adb bulunamadı. Android platform-tools kurun ya da adb_path olarak "
-            r'"C:\Program Files\BlueStacks_nxt\HD-Adb.exe" gibi bir yol verin.'
-        )
+        raise AdbError(tr(
+            "adb not found. Install Android platform-tools or give a path like "
+            "{example} as adb_path.", example=r'"C:\Program Files\BlueStacks_nxt\HD-Adb.exe"'))
 
     @classmethod
     def _bluestacks_candidates(cls):
@@ -64,13 +65,13 @@ class AdbLocator:
 
 
 class AdbDevice:
-    """Tek bir ADB cihazını temsil eder (ör. 127.0.0.1:5555)."""
+    """Represents a single ADB device (e.g. 127.0.0.1:5555)."""
 
     def __init__(self, serial: str, adb_path: Optional[str] = None, timeout: float = 10.0):
         self._serial = serial
         self._adb = AdbLocator.locate(adb_path)
         self._timeout = timeout
-        # Konsol penceresi açılmasın (Windows)
+        # no console window (Windows)
         self._creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
     @classmethod
@@ -85,14 +86,14 @@ class AdbDevice:
     def adb_path(self) -> str:
         return self._adb
 
-    # ---- bağlantı -------------------------------------------------------- #
+    # ---- connection ------------------------------------------------------ #
     def connect(self) -> None:
         out = self._run_text("connect", self._serial, with_serial=False)
         if "connected" not in out.lower() or "cannot" in out.lower() or "failed" in out.lower():
-            raise AdbError(f"ADB bağlanamadı ({self._serial}): {out.strip()}")
+            raise AdbError(tr("ADB could not connect ({serial}): {output}", serial=self._serial, output=out.strip()))
         if not self.is_connected():
-            raise AdbError(f"Cihaz hazır değil ({self._serial}). BlueStacks'te ADB açık mı?")
-        log.info("ADB bağlandı: %s (%s)", self._serial, self._adb)
+            raise AdbError(tr("Device is not ready ({serial}). Is ADB enabled in BlueStacks?", serial=self._serial))
+        log.info(tr("ADB connected: %s (%s)"), self._serial, self._adb)
 
     def disconnect(self) -> None:
         try:
@@ -107,30 +108,31 @@ class AdbDevice:
             return False
 
     def reconnect(self) -> None:
-        log.warning("ADB yeniden bağlanıyor: %s", self._serial)
+        log.warning(tr("ADB reconnecting: %s"), self._serial)
         self.disconnect()
         self.connect()
 
-    # ---- komutlar -------------------------------------------------------- #
+    # ---- commands -------------------------------------------------------- #
     def exec_out(self, *args: str) -> bytes:
-        """`adb exec-out ...` çalıştırır ve ham çıktıyı döndürür (ikili veri için)."""
+        """Runs `adb exec-out ...` and returns the raw output (for binary data)."""
         return self._run("exec-out", *args)
 
     def shell(self, command: str) -> str:
         return self._run_text("shell", command)
 
-    # ---- iç yardımcılar -------------------------------------------------- #
+    # ---- internal helpers ------------------------------------------------ #
     def _run(self, *args: str, with_serial: bool = True) -> bytes:
         cmd = [self._adb] + (["-s", self._serial] if with_serial else []) + list(args)
         try:
             res = subprocess.run(cmd, capture_output=True, timeout=self._timeout,
                                  creationflags=self._creationflags)
         except subprocess.TimeoutExpired as e:
-            raise AdbError(f"ADB zaman aşımı: {' '.join(args)}") from e
+            raise AdbError(tr("ADB timeout: {command}", command=" ".join(args))) from e
         except OSError as e:
-            raise AdbError(f"adb çalıştırılamadı: {e}") from e
+            raise AdbError(tr("adb could not be run: {error}", error=e)) from e
         if res.returncode != 0:
-            raise AdbError(f"adb {' '.join(args)} başarısız: {res.stderr.decode(errors='ignore').strip()}")
+            raise AdbError(tr("adb {command} failed: {error}", command=" ".join(args),
+                              error=res.stderr.decode(errors="ignore").strip()))
         return res.stdout
 
     def _run_text(self, *args: str, with_serial: bool = True) -> str:

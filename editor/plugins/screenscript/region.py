@@ -1,4 +1,4 @@
-"""SikuliX tarzı Region / Match / Screen."""
+"""SikuliX style Region / Match / Screen."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from typing import List, Optional, Union
 
 import numpy as np
 
+from ...i18n import tr
 from .engine import Engine, reading_rows
 from .errors import FindFailed, TextNotFound
 from .geometry import Location, Rect
@@ -22,13 +23,13 @@ TextQuery = Union[str, "re.Pattern[str]"]
 
 
 class Region:
-    """Ekranda dikdörtgen bir alan. Arama ve tıklama işlemleri bu alanla sınırlıdır."""
+    """A rectangular area on the screen. Search and click operations are limited to this area."""
 
     def __init__(self, rect: Rect, engine: Engine):
         self._rect = rect
         self._engine = engine
 
-    # ---- geometri -------------------------------------------------------- #
+    # ---- geometry -------------------------------------------------------- #
     @property
     def rect(self) -> Rect:
         return self._rect
@@ -44,11 +45,11 @@ class Region:
 
     @property
     def target(self) -> Location:
-        """Tıklanacak nokta. Region için merkez; Match bunu target_offset ile değiştirir."""
+        """Point to click. The center for a Region; Match changes it with target_offset."""
         return self.center
 
     def region(self, x: int, y: int, w: int, h: int) -> "Region":
-        """Bu bölgeye göre alt bölge."""
+        """Sub-region relative to this region."""
         return Region(Rect(self.x + x, self.y + y, w, h), self._engine)
 
     def grow(self, px: int) -> "Region":
@@ -66,9 +67,9 @@ class Region:
     def below(self, h: int) -> "Region":
         return Region(Rect(self.x, self._rect.bottom, self.w, h), self._engine)
 
-    # ---- arama ----------------------------------------------------------- #
+    # ---- search ---------------------------------------------------------- #
     def exists(self, target: PatternLike, timeout: Optional[float] = None) -> Optional["Match"]:
-        """Bulursa Match, bulamazsa None döndürür (hata fırlatmaz)."""
+        """Returns a Match if found, None otherwise (does not raise)."""
         pattern = Pattern.of(target)
         timeout = self._timeout(timeout)
         self._last_best = 0.0
@@ -82,11 +83,11 @@ class Region:
             return None
 
         match = self._engine.repeat_until(timeout, attempt)
-        log.debug("exists(%s) -> %s (en iyi %.3f)", pattern.name, match, self._last_best)
+        log.debug(tr("exists(%s) -> %s (best %.3f)"), pattern.name, match, self._last_best)
         return match
 
     def wait(self, target: PatternLike, timeout: Optional[float] = None) -> "Match":
-        """Görünene kadar bekler; süre dolarsa FindFailed."""
+        """Waits until it appears; FindFailed when the time is up."""
         pattern = Pattern.of(target)
         timeout = self._timeout(timeout)
         match = self.exists(pattern, timeout)
@@ -97,7 +98,7 @@ class Region:
         return match
 
     def find(self, target: PatternLike) -> "Match":
-        """wait(target, Settings.auto_wait_timeout) ile aynı."""
+        """Same as wait(target, Settings.auto_wait_timeout)."""
         return self.wait(target, None)
 
     def find_all(self, target: PatternLike) -> List["Match"]:
@@ -106,7 +107,7 @@ class Region:
         return [Match(m.rect, m.score, pattern, self._engine) for m in res.matches]
 
     def wait_vanish(self, target: PatternLike, timeout: Optional[float] = None) -> bool:
-        """Kaybolursa True, süre içinde kaybolmazsa False."""
+        """True if it disappears, False if it does not disappear in time."""
         pattern = Pattern.of(target)
         gone = self._engine.repeat_until(
             self._timeout(timeout),
@@ -114,13 +115,13 @@ class Region:
         return bool(gone)
 
     def best_score(self, target: PatternLike) -> float:
-        """Tek tarama; eşik gözetmeksizin en iyi benzerlik skoru. Eşik ayarlamak için kullanışlı."""
+        """Single scan; best similarity score regardless of the threshold. Handy for tuning thresholds."""
         return self._engine.search(self._rect, Pattern.of(target)).best_score
 
-    # ---- metin (OCR) ----------------------------------------------------- #
+    # ---- text (OCR) ------------------------------------------------------ #
     def text(self, scale: float = 1.0) -> str:
-        """Bölgedeki yazı. Aynı satırdaki parçalar boşlukla, satırlar alt satırla birleşir.
-        Çok küçük yazılarda (tek rakam) scale=3 verin.
+        """Text in the region. Parts on the same line are joined with spaces, lines with newlines.
+        Pass scale=3 for very small texts (a single digit).
 
             speed = Region(900, 1005, 110, 40).text()     # "66m/s"
         """
@@ -128,12 +129,12 @@ class Region:
                          for row in reading_rows(self._engine.read_text(self._rect, scale)))
 
     def read_lines(self, scale: float = 1.0) -> List["TextMatch"]:
-        """Bölgedeki her yazı parçası konumuyla (okuma sırasında). TextMatch tıklanabilir."""
+        """Every text part in the region with its position (in reading order). TextMatch is clickable."""
         return [TextMatch(r, self._engine) for r in self._engine.read_text(self._rect, scale)]
 
     def exists_text(self, query: TextQuery, timeout: Optional[float] = None) -> Optional["TextMatch"]:
-        """Yazıyı arar; bulursa TextMatch, bulamazsa None. query düz metinse büyük/küçük harf
-        ve boşluk farkı gözetmeden içerir mi diye bakar; re.compile(...) verilirse regex arar."""
+        """Searches the text; returns a TextMatch if found, None otherwise. A plain text query checks
+        containment ignoring case and whitespace; with re.compile(...) a regex search is done."""
         matches = _text_matcher(query)
         self._last_seen: List[str] = []
 
@@ -143,7 +144,7 @@ class Region:
             for r in results:
                 if matches(r.text):
                     return TextMatch(r, self._engine)
-            for row in reading_rows(results):   # parçalara bölünmüş satırlar (ör. "1,644 km")
+            for row in reading_rows(results):   # lines split into parts (e.g. "1,644 km")
                 if len(row) > 1 and matches(" ".join(r.text for r in row)):
                     return TextMatch(_merge(row), self._engine)
             return None
@@ -153,7 +154,7 @@ class Region:
         return match
 
     def wait_text(self, query: TextQuery, timeout: Optional[float] = None) -> "TextMatch":
-        """Yazı görünene kadar bekler; süre dolarsa TextNotFound (bir FindFailed)."""
+        """Waits until the text appears; TextNotFound (a FindFailed) when the time is up."""
         timeout = self._timeout(timeout)
         match = self.exists_text(query, timeout)
         if match is None:
@@ -163,10 +164,10 @@ class Region:
         return match
 
     def find_text(self, query: TextQuery) -> "TextMatch":
-        """wait_text(query, Settings.auto_wait_timeout) ile aynı."""
+        """Same as wait_text(query, Settings.auto_wait_timeout)."""
         return self.wait_text(query, None)
 
-    # ---- eylemler -------------------------------------------------------- #
+    # ---- actions --------------------------------------------------------- #
     def click(self, target: Target = None, timeout: Optional[float] = None) -> Location:
         loc = self._resolve(target, timeout)
         log.debug("click %s", loc)
@@ -183,7 +184,7 @@ class Region:
         self._engine.input.swipe(self._resolve(start, None), self._resolve(end, None), duration_ms)
 
     def swipe(self, dx: int, dy: int, duration_ms: int = 300) -> None:
-        """Bölge merkezinden (dx, dy) kadar kaydırır."""
+        """Swipes by (dx, dy) from the region center."""
         c = self.center
         self._engine.input.swipe(c, c.offset(dx, dy), duration_ms)
 
@@ -195,15 +196,15 @@ class Region:
     def key(self, keycode: int) -> None:
         self._engine.input.key(keycode)
 
-    # ---- yardımcılar ----------------------------------------------------- #
+    # ---- helpers --------------------------------------------------------- #
     def capture(self) -> np.ndarray:
-        """Bu bölgenin güncel görüntüsü."""
+        """Current image of this region."""
         img = self._engine.grab()
         return img[self.y:self._rect.bottom, self.x:self._rect.right].copy()
 
     def highlight(self, target: Union[PatternLike, "Region", None] = None) -> str:
-        """Bölgeyi, verilen Match/Region'ı ya da bir pattern'in tüm eşleşmelerini işaretleyip
-        debug klasörüne kaydeder."""
+        """Marks the region, the given Match/Region or all matches of a pattern and saves it to the
+        debug folder."""
         if target is None:
             return self._engine.save_debug(f"region_{self.x}_{self.y}", [self._rect])
         if isinstance(target, Region):
@@ -229,7 +230,7 @@ class Region:
 
 
 class Match(Region):
-    """Bulunmuş bir eşleşme. Kendisi de bir Region'dır; içinde tekrar arama yapılabilir."""
+    """A found match. It is a Region itself; you can search inside it again."""
 
     def __init__(self, rect: Rect, score: float, pattern: Pattern, engine: Engine):
         super().__init__(rect, engine)
@@ -259,7 +260,7 @@ class Match(Region):
 
 
 class TextMatch(Region):
-    """Okunmuş bir yazı parçası. Kendisi de bir Region'dır: tıklanabilir, içinde arama yapılabilir."""
+    """A text part that was read. It is a Region itself: clickable, searchable."""
 
     def __init__(self, result: TextResult, engine: Engine):
         super().__init__(result.rect, engine)
@@ -267,7 +268,7 @@ class TextMatch(Region):
         self._score = result.score
 
     def text(self, scale: float = 1.0) -> str:
-        """Okunmuş yazı (yeniden okumaz; güncel hali için Region'ı tekrar okuyun)."""
+        """The text that was read (does not read again; read the Region again for the current value)."""
         return self._text
 
     @property
@@ -309,7 +310,7 @@ def _merge(results: List[TextResult]) -> TextResult:
 
 
 class Screen(Region):
-    """Tüm ekran. Boyutu ilk kareden öğrenilir."""
+    """The whole screen. Its size is learned from the first frame."""
 
     def __init__(self, engine: Engine):
         super().__init__(engine.screen_rect(), engine)

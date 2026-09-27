@@ -1,4 +1,4 @@
-"""Değişmez geometri tipleri."""
+"""Immutable geometry types."""
 
 from __future__ import annotations
 

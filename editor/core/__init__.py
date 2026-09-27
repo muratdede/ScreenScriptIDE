@@ -1,1 +1,1 @@
-"""Editörün Qt'den bağımsız çekirdeği (proje, protokol) ve Qt tabanlı servisleri."""
+"""The editor's Qt-independent core (project, protocol) and its Qt based services."""

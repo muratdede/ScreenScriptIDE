@@ -1,5 +1,5 @@
-"""Engine: sağlayıcı, eşleştirici, girdi ve ayarları bir araya getirir.
-Region/Match/Screen tüm işi Engine'e devreder (bağımlılıklar tek yerde)."""
+"""Engine: combines the provider, matcher, input and settings.
+Region/Match/Screen delegate all work to the Engine (dependencies in one place)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from typing import Callable, List, Optional, TypeVar
 import cv2
 import numpy as np
 
+from ...i18n import tr
 from .geometry import Location, Rect
 from .input import InputDriver
 from .matching import Matcher, MatchResult
@@ -26,8 +27,8 @@ T = TypeVar("T")
 
 @dataclass(frozen=True)
 class SearchResult:
-    matches: List[MatchResult]   # ekran koordinatlarında, eşik üstü
-    best_score: float            # eşik altında olsa bile en iyi skor (ayar yapmak için)
+    matches: List[MatchResult]   # in screen coordinates, above the threshold
+    best_score: float            # best score even if below the threshold (for tuning)
 
 
 class Engine:
@@ -42,7 +43,7 @@ class Engine:
         self.text_reader = text_reader or create_text_reader(self.settings.ocr_backend)
         self._last_image: Optional[np.ndarray] = None
 
-    # ---- ekran ----------------------------------------------------------- #
+    # ---- screen ---------------------------------------------------------- #
     def grab(self, fresh: bool = True) -> np.ndarray:
         self._last_image = self.provider.snapshot(fresh)
         return self._last_image
@@ -55,12 +56,12 @@ class Engine:
         img = self._last_image if self._last_image is not None else self.grab()
         return Rect(0, 0, img.shape[1], img.shape[0])
 
-    # ---- arama ----------------------------------------------------------- #
+    # ---- search ---------------------------------------------------------- #
     def similarity_for(self, pattern: Pattern) -> float:
         return pattern.similarity if pattern.similarity is not None else self.settings.min_similarity
 
     def search(self, area: Rect, pattern: Pattern, find_all: bool = False) -> SearchResult:
-        """Tek tarama: yeni kare al, area içinde pattern'i ara."""
+        """Single scan: take a new frame, search the pattern inside area."""
         image = self.grab()
         area = area.intersect(Rect(0, 0, image.shape[1], image.shape[0])) or Rect(0, 0, 0, 0)
         haystack = image[area.y:area.bottom, area.x:area.right]
@@ -79,11 +80,11 @@ class Engine:
         return SearchResult(shifted, best_score)
 
     def read_text(self, area: Rect, scale: float = 1.0) -> List[TextResult]:
-        """Tek okuma: yeni kare al, area içindeki yazıları ekran koordinatlarında döndür
-        (yukarıdan aşağıya, aynı satırdakiler soldan sağa).
+        """Single read: take a new frame, return the texts inside area in screen coordinates
+        (top to bottom, left to right within the same line).
 
-        scale: okumadan önce büyütme. Tek haneli sayaç gibi çok küçük yazılar 1x'te hiç
-        algılanmıyor, 3x'te doğru okunuyor."""
+        scale: upscaling before reading. Very small texts like a single-digit counter are not
+        detected at all at 1x but read correctly at 3x."""
         image = self.grab()
         area = area.intersect(Rect(0, 0, image.shape[1], image.shape[0])) or Rect(0, 0, 0, 0)
         crop = image[area.y:area.bottom, area.x:area.right]
@@ -97,8 +98,8 @@ class Engine:
         return sort_reading_order(found)
 
     def repeat_until(self, timeout: float, attempt: Callable[[], Optional[T]]) -> Optional[T]:
-        """attempt() None olmayan bir değer döndürene ya da süre dolana kadar scan_rate hızında dener.
-        timeout=0 ise tek deneme yapar."""
+        """Tries at scan_rate until attempt() returns a non-None value or the time is up.
+        timeout=0 makes a single attempt."""
         deadline = time.monotonic() + max(0.0, timeout)
         period = 1.0 / max(self.settings.scan_rate, 0.1)
         while True:
@@ -110,7 +111,7 @@ class Engine:
                 return None
             time.sleep(max(0.0, min(period - (time.monotonic() - started), deadline - time.monotonic())))
 
-    # ---- hata ayıklama --------------------------------------------------- #
+    # ---- debugging ------------------------------------------------------- #
     def save_debug(self, label: str, rects: List[Rect] = (), scores: List[float] = ()) -> str:
         image = self._last_image if self._last_image is not None else self.grab()
         canvas = image.copy()
@@ -125,10 +126,10 @@ class Engine:
         ms = int((time.time() % 1) * 1000)
         path = os.path.join(self.settings.debug_dir, f"{time.strftime('%Y%m%d_%H%M%S')}_{ms:03d}_{safe}.png")
         cv2.imwrite(path, canvas)
-        log.debug("Debug görüntüsü: %s", path)
+        log.debug(tr("Debug image: %s"), path)
         return path
 
-    # ---- girdi ----------------------------------------------------------- #
+    # ---- input ----------------------------------------------------------- #
     def tap(self, loc: Location) -> None:
         self.input.tap(loc)
         if self.settings.click_delay:
@@ -136,8 +137,8 @@ class Engine:
 
 
 def reading_rows(results: List[TextResult]) -> List[List[TextResult]]:
-    """Satırlara ayırır: dikey merkezleri yarım yazı yüksekliğinden yakın olanlar aynı satırdır.
-    Satırlar yukarıdan aşağıya, satır içi parçalar soldan sağa sıralıdır."""
+    """Splits into lines: items whose vertical centers are closer than half the text height are on
+    the same line. Lines are ordered top to bottom, items within a line left to right."""
     rows: List[List[TextResult]] = []
     for r in sorted(results, key=lambda r: r.rect.center.y):
         row = rows[-1] if rows else None

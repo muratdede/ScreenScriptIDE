@@ -1,13 +1,13 @@
-"""IntelliJ tarzı gruplandırılmış ayar penceresi: solda arama + kategori ağacı, sağda seçili sayfa,
-altta Tamam / İptal / Uygula.
+"""IntelliJ style grouped settings window: search + category tree on the left, the selected page on
+the right, OK / Cancel / Apply at the bottom.
 
-Kullanım (alt sınıfta):
-    self.add_page(("Cihaz", "Bağlantı"), [
-        ("Bağlantı", [("Host", host_edit), ("", checkbox)]),   # (bölüm başlığı, [(etiket, widget)])
+Usage (in a subclass):
+    self.add_page((tr("Device"), tr("Connection")), [
+        (tr("Connection"), [(tr("Host"), host_edit), ("", checkbox)]),   # (section title, [(label, widget)])
     ])
-    self.finish()   # sayfalar eklendikten sonra
+    self.finish()   # after the pages are added
 
-apply() ezilir; Tamam ve Uygula önce apply()'ı çağırır, sonra applied sinyalini yayar.
+apply() is overridden; OK and Apply first call apply(), then emit the applied signal.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (QAbstractButton, QAbstractSpinBox, QComboBox, QDi
                                QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTreeWidget, QTreeWidgetItem,
                                QTreeWidgetItemIterator, QVBoxLayout, QWidget)
 
+from ..i18n import tr
 from . import icons
 
 Row = Tuple[str, QWidget]
@@ -49,14 +50,14 @@ def hint(text: str) -> QLabel:
     label = QLabel(text)
     label.setObjectName("hint")
     label.setWordWrap(True)
-    label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)   # form genişliğince satır kaydır
+    label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)   # wrap lines at the form width
     return label
 
 
 class GroupedSettingsDialog(QDialog):
     applied = Signal()
 
-    _last_page: Dict[str, str] = {}   # sınıf adı -> son açık sayfa (oturum boyunca hatırlanır)
+    _last_page: Dict[str, str] = {}   # class name -> last open page (remembered for the session)
 
     def __init__(self, title: str, parent=None):
         super().__init__(parent)
@@ -67,13 +68,13 @@ class GroupedSettingsDialog(QDialog):
                            .replace("%DASH%", icons.icon_file("minimize", "#ffffff")))
         self._items: Dict[Tuple[str, ...], QTreeWidgetItem] = {}
 
-        # sol: arama + ağaç
+        # left: search + tree
         nav = QWidget(objectName="settings_nav")
         nl = QVBoxLayout(nav)
         nl.setContentsMargins(8, 8, 4, 8)
         nl.setSpacing(6)
         self._search = QLineEdit()
-        self._search.setPlaceholderText("Ara")
+        self._search.setPlaceholderText(tr("Search"))
         self._search.setClearButtonEnabled(True)
         self._search.addAction(icons.icon("search", "#9da0a8"), QLineEdit.LeadingPosition)
         self._search.textChanged.connect(self._filter)
@@ -85,7 +86,7 @@ class GroupedSettingsDialog(QDialog):
         nl.addWidget(self._search)
         nl.addWidget(self._tree, 1)
 
-        # sağ: başlık (breadcrumb) + sayfalar
+        # right: title (breadcrumb) + pages
         right = QWidget(objectName="settings_page")
         rl = QVBoxLayout(right)
         rl.setContentsMargins(16, 12, 8, 0)
@@ -104,10 +105,10 @@ class GroupedSettingsDialog(QDialog):
 
         footer_line = QFrame(objectName="settings_footer")
         self._buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.Apply)
-        self._buttons.button(QDialogButtonBox.Ok).setText("Tamam")
-        self._buttons.button(QDialogButtonBox.Cancel).setText("İptal")
+        self._buttons.button(QDialogButtonBox.Ok).setText(tr("OK"))
+        self._buttons.button(QDialogButtonBox.Cancel).setText(tr("Cancel"))
         self._apply_btn = self._buttons.button(QDialogButtonBox.Apply)
-        self._apply_btn.setText("Uygula")
+        self._apply_btn.setText(tr("Apply"))
         self._apply_btn.setEnabled(False)
         self._apply_btn.clicked.connect(self._do_apply)
         self._buttons.accepted.connect(self._on_ok)
@@ -125,16 +126,16 @@ class GroupedSettingsDialog(QDialog):
         layout.addWidget(footer_line)
         layout.addWidget(bottom)
 
-    # ---- sayfa oluşturma -------------------------------------------------- #
+    # ---- building pages -------------------------------------------------- #
     def add_page(self, path: Sequence[str], sections: Iterable[Section]) -> QWidget:
-        """path: ağaçtaki konum, ör. ("Cihaz", "Bağlantı"). Eksik üst düğümler sayfasız oluşturulur;
-        sayfası olmayan düğüm seçilince ilk alt sayfası gösterilir."""
+        """path: position in the tree, e.g. ("Device", "Connection"). Missing parent nodes are created without
+        a page; selecting a node without a page shows its first child page."""
         page = QWidget()
         pl = QVBoxLayout(page)
         pl.setContentsMargins(0, 0, 12, 12)
         pl.setSpacing(4)
         keywords: List[str] = list(path)
-        fills = False   # dikey genişleyen widget (ör. liste) varsa sayfayı o doldurur
+        fills = False   # a vertically expanding widget (e.g. a list) fills the page if present
         for i, (title, rows) in enumerate(sections):
             if title:
                 pl.addWidget(self._section_header(title, first=i == 0))
@@ -144,7 +145,7 @@ class GroupedSettingsDialog(QDialog):
             form.setHorizontalSpacing(12)
             form.setVerticalSpacing(8)
             form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)   # sayı/seçim kutuları dar kalır
+            form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)   # number/combo boxes stay narrow
             for label, widget in rows:
                 form.addRow(f"{label}:" if label else "", widget)
                 keywords.append(label)
@@ -166,7 +167,7 @@ class GroupedSettingsDialog(QDialog):
         return page
 
     def finish(self) -> None:
-        """Sayfalar eklendikten sonra: ağacı açar, son sayfayı seçer, değişiklik izlemeyi kurar."""
+        """After the pages are added: expands the tree, selects the last page, sets up change tracking."""
         self._tree.expandAll()
         last = self._last_page.get(type(self).__name__)
         target = next((it for key, it in self._items.items() if " / ".join(key) == last), None)
@@ -202,7 +203,7 @@ class GroupedSettingsDialog(QDialog):
 
     @staticmethod
     def _widget_texts(widget: QWidget) -> List[str]:
-        """Arama için widget (ve alt widget'larındaki) görünür metinler."""
+        """Visible texts of the widget (and its child widgets) for searching."""
         texts = []
         for w in [widget] + widget.findChildren(QWidget):
             if isinstance(w, (QLabel, QAbstractButton)):
@@ -218,9 +219,9 @@ class GroupedSettingsDialog(QDialog):
                 texts.append(w.toolTip())
         return texts
 
-    # ---- gezinme ---------------------------------------------------------- #
+    # ---- navigation ------------------------------------------------------ #
     def _page_item(self, item: Optional[QTreeWidgetItem]) -> Optional[QTreeWidgetItem]:
-        """Sayfası olmayan düğüm için ilk (görünür) sayfalı alt düğüm."""
+        """For a node without a page: the first (visible) child node with a page."""
         while item is not None and item.data(0, _PAGE_ROLE) is None:
             children = [item.child(i) for i in range(item.childCount()) if not item.child(i).isHidden()]
             item = children[0] if children else None
@@ -244,7 +245,7 @@ class GroupedSettingsDialog(QDialog):
     def _filter(self, text: str) -> None:
         needle = text.strip().casefold()
         first_match = None
-        # önce yapraklar/sayfalar, sonra üst düğümler (alt düğümü görünürse görünür)
+        # leaves/pages first, then parent nodes (visible if a child is visible)
         for path in sorted(self._items, key=len, reverse=True):
             item = self._items[path]
             own = needle in (item.data(0, _KEYWORDS_ROLE) or "") or needle in item.text(0).casefold()
@@ -264,7 +265,7 @@ class GroupedSettingsDialog(QDialog):
                                                                       is None)):
             self._tree.setCurrentItem(first_match)
 
-    # ---- uygula ----------------------------------------------------------- #
+    # ---- apply ----------------------------------------------------------- #
     def _watch_changes(self) -> None:
         mark = lambda *_: self._apply_btn.setEnabled(True)   # noqa: E731
         for w in self._stack.findChildren(QWidget):
@@ -281,10 +282,10 @@ class GroupedSettingsDialog(QDialog):
             elif isinstance(w, QAbstractButton) and w.isCheckable():
                 w.toggled.connect(mark)
             elif isinstance(w, QTreeWidget) and w.objectName() != "settings_tree":
-                w.itemChanged.connect(mark)   # işaretlenebilir öğeler
+                w.itemChanged.connect(mark)   # checkable items
 
     def apply(self) -> None:
-        """Alt sınıf: penceredeki değerleri hedef yapılandırmaya yazar."""
+        """Subclass: writes the values of the window into the target configuration."""
 
     def _do_apply(self) -> None:
         self.apply()

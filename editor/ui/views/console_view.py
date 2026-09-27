@@ -1,4 +1,4 @@
-"""Konsol: script çıktısı + debug sırasında ifade değerlendirme / çalışırken stdin."""
+"""Console: script output + expression evaluation while debugging / stdin while running."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from PySide6.QtGui import QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QVBoxLayout, QWidget
 
 from ...core.session import SessionState
+from ...i18n import N_, tr
 from ..theme import THEME
 from .base import DockView
 
@@ -34,7 +35,7 @@ class _HistoryLineEdit(QLineEdit):
 
 class ConsoleView(DockView):
     view_id = "console"
-    title = "Konsol"
+    title = N_("Console")
     icon_name = "console"
     stripe_bottom = True
     default_area = Qt.BottomDockWidgetArea
@@ -79,7 +80,7 @@ class ConsoleView(DockView):
         return w
 
     def title_actions(self):
-        return [self.make_action("trash", "Konsolu temizle", lambda: self._out.clear())]
+        return [self.make_action("trash", tr("Clear console"), lambda: self._out.clear())]
 
     @staticmethod
     def _fmt(color):
@@ -87,7 +88,7 @@ class ConsoleView(DockView):
         f.setForeground(color)
         return f
 
-    # ---- çıktı ----------------------------------------------------------- #
+    # ---- output ---------------------------------------------------------- #
     def append(self, text: str, kind: str = "out") -> None:
         bar = self._out.verticalScrollBar()
         at_bottom = bar.value() >= bar.maximum() - 4
@@ -104,19 +105,19 @@ class ConsoleView(DockView):
         if at_bottom:
             bar.setValue(bar.maximum())
 
-    # ---- giriş ----------------------------------------------------------- #
+    # ---- input ----------------------------------------------------------- #
     def _update_prompt(self, state) -> None:
         if state is SessionState.PAUSED:
             self._prompt.setText("debug »")
-            self._input.setPlaceholderText("İfade yazın (ör. m.score, SCREEN.best_score('x.png'))")
+            self._input.setPlaceholderText(tr("Type an expression (e.g. m.score, SCREEN.best_score('x.png'))"))
             self._input.setEnabled(True)
         elif state is SessionState.RUNNING:
             self._prompt.setText("stdin »")
-            self._input.setPlaceholderText("Script'e girdi gönder (input() için)")
+            self._input.setPlaceholderText(tr("Send input to the script (for input())"))
             self._input.setEnabled(True)
         else:
             self._prompt.setText("»")
-            self._input.setPlaceholderText("Debug sırasında ifade değerlendirmek için kullanılır")
+            self._input.setPlaceholderText(tr("Used to evaluate expressions while debugging"))
             self._input.setEnabled(False)
 
     def _submit(self) -> None:

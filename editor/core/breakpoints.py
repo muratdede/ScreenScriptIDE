@@ -1,4 +1,4 @@
-"""Breakpoint deposu: dosya -> satır kümesi."""
+"""Breakpoint store: file -> set of lines."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ def _key(path: str) -> str:
 
 
 class BreakpointStore(QObject):
-    changed = Signal(str)   # değişen dosya yolu
+    changed = Signal(str)   # path of the changed file
     muted_changed = Signal(bool)
 
     def __init__(self, parent=None):
@@ -22,7 +22,7 @@ class BreakpointStore(QObject):
         self._display: Dict[str, str] = {}
         self._muted = False
 
-    # ---- geçici kapatma (IntelliJ'deki "Mute Breakpoints") ---------------- #
+    # ---- temporary disabling ("Mute Breakpoints" in IntelliJ) ------------ #
     @property
     def muted(self) -> bool:
         return self._muted
@@ -69,7 +69,7 @@ class BreakpointStore(QObject):
         return {self._display[k]: sorted(v) for k, v in self._lines.items() if v}
 
     def active(self) -> Dict[str, List[int]]:
-        """Debugger'a gönderilecek breakpoint'ler; kapalıyken boştur."""
+        """Breakpoints sent to the debugger; empty while muted."""
         return {} if self._muted else self.as_dict()
 
     def all(self) -> List[tuple]:

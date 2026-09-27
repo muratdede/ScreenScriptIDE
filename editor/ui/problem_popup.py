@@ -1,8 +1,8 @@
-"""Sorunun üzerine gelince açılan pencere (IntelliJ'deki inceleme açılır penceresi).
+"""Popup shown when hovering a problem (the inspection popup in IntelliJ).
 
-Her sorun ayrı satırda (ayırıcı çizgilerle) gösterilir; altta hızlı düzeltme bağlantıları yer alır:
-ilk düzeltme doğrudan (Alt+Shift+Enter), diğerleri "Diğer eylemler…" menüsünde (Alt+Enter).
-QToolTip'in aksine fare üzerine gelince kapanmaz; bağlantılara tıklanabilir.
+Every problem is shown on its own row (with separator lines); quick fix links are at the bottom:
+the first fix directly (Alt+Shift+Enter), the others in the "More actions…" menu (Alt+Enter).
+Unlike QToolTip it does not close when the mouse hovers it; links are clickable.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor, QCursor, QFontMetrics, QGuiApplication, QPaint
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMenu, QToolButton, QVBoxLayout, QWidget
 
 from ..core.diagnostics import Diagnostic
+from ..i18n import tr
 from . import icons
 from .theme import THEME
 
@@ -42,7 +43,7 @@ class ProblemPopup(QWidget):
         self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self._fixes: List[Fix] = []
-        self._keep_alive: Optional[Callable[[QPoint], bool]] = None   # fare hâlâ sorunun üzerinde mi?
+        self._keep_alive: Optional[Callable[[QPoint], bool]] = None   # is the mouse still over the problem?
         self._menu_open = False
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(1, 1, 1, 1)
@@ -50,12 +51,12 @@ class ProblemPopup(QWidget):
         self._watch = QTimer(self, interval=150)
         self._watch.timeout.connect(self._check_mouse)
 
-    # ---- içerik ---------------------------------------------------------- #
+    # ---- content --------------------------------------------------------- #
     def show_for(self, problems: Sequence[Diagnostic], fixes: Sequence[Fix], anchor: QRect,
                  keep_alive: Optional[Callable[[QPoint], bool]] = None) -> None:
-        """anchor: sorunun ekrandaki (global) dikdörtgeni; pencere altına (sığmazsa üstüne) açılır.
-        keep_alive verilirse fare pencereden ve sorundan çıkınca kapanır; verilmezse (klavyeyle
-        açıldıysa) tuşa basılana kadar açık kalır."""
+        """anchor: the problem's (global) rectangle on screen; the popup opens below it (above if it doesn't fit).
+        If keep_alive is given it closes when the mouse leaves the popup and the problem; otherwise
+        (opened with the keyboard) it stays open until a key is pressed."""
         self._fixes = list(fixes)
         self._keep_alive = keep_alive
         self._rebuild(problems)
@@ -87,13 +88,13 @@ class ProblemPopup(QWidget):
             icon = QLabel()
             icon.setPixmap(icons.icon("error" if d.is_error else "warning",
                                       (THEME.error if d.is_error else THEME.warning).name()).pixmap(14, 14))
-            icon.setFixedSize(14, 18)   # metnin ilk satırıyla hizalı; boş alanı yutmasın
+            icon.setFixedSize(14, 18)   # aligned with the first text line; must not swallow empty space
             icon.setAlignment(Qt.AlignCenter)
             text = QLabel(html.escape(d.message))
             text.setWordWrap(True)
             text.setTextFormat(Qt.RichText)
             text.setStyleSheet(f"color: {THEME.text.name()};")
-            # word-wrap'li QLabel düzende en dar hâline büzülür; genişliği metinden ver
+            # a word-wrapped QLabel shrinks to its narrowest in layouts; give it the width of the text
             ideal = QFontMetrics(text.font()).horizontalAdvance(d.message) + 4
             text.setFixedWidth(min(self.MAX_WIDTH - 80, ideal))
             text.setToolTip(d.code)
@@ -103,7 +104,7 @@ class ProblemPopup(QWidget):
             if i == 0 and len(self._fixes) > 1:
                 more = QToolButton()
                 more.setIcon(icons.icon("more"))
-                more.setToolTip("Diğer eylemler (Alt+Enter)")
+                more.setToolTip(tr("More actions (Alt+Enter)"))
                 more.setCursor(Qt.PointingHandCursor)
                 more.clicked.connect(lambda _=False, b=more: self._show_menu(b.mapToGlobal(b.rect().bottomLeft())))
                 lay.addWidget(more, 0, Qt.AlignTop)
@@ -119,7 +120,7 @@ class ProblemPopup(QWidget):
             lay.addWidget(self._shortcut("Alt+Shift+Enter"))
             if len(self._fixes) > 1:
                 lay.addSpacing(14)
-                more = self._link("Diğer eylemler…", None)
+                more = self._link(tr("More actions…"), None)
                 more.linkActivated.connect(lambda _l, m=more: self._show_menu(m.mapToGlobal(m.rect().bottomLeft())))
                 lay.addWidget(more)
                 lay.addWidget(self._shortcut("Alt+Enter"))
@@ -140,7 +141,7 @@ class ProblemPopup(QWidget):
         label.setStyleSheet(f"color: {THEME.muted.name()};")
         return label
 
-    # ---- eylemler -------------------------------------------------------- #
+    # ---- actions --------------------------------------------------------- #
     @property
     def fixes(self) -> List[Fix]:
         return list(self._fixes)
@@ -165,7 +166,7 @@ class ProblemPopup(QWidget):
     def show_menu_at(self, at: QPoint) -> None:
         self._show_menu(at)
 
-    # ---- konum / kapanma --------------------------------------------------- #
+    # ---- position / closing ---------------------------------------------- #
     def _place(self, anchor: QRect) -> None:
         screen = QGuiApplication.screenAt(anchor.center()) or QGuiApplication.primaryScreen()
         area = screen.availableGeometry()

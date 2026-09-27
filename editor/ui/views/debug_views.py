@@ -1,5 +1,5 @@
-"""Debug paneli (IntelliJ'deki Debug penceresi gibi): üstte debug kontrolleri,
-altta Çerçeveler | Değişkenler (+ ifade değerlendirme) | Breakpoint'ler."""
+"""Debug panel (like the Debug window in IntelliJ): debug controls at the top,
+Frames | Variables (+ expression evaluation) | Breakpoints below."""
 
 from __future__ import annotations
 
@@ -12,12 +12,13 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QListWidget, QLis
                                QToolBar, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from ...core.session import SessionState
+from ...i18n import N_, tr
 from .. import icons
 from .base import DockView
 
 
 def _pane(title: str, body: QWidget, buttons=()) -> Tuple[QWidget, QLabel]:
-    """Başlıklı küçük bölme."""
+    """Small pane with a title."""
     w = QWidget()
     layout = QVBoxLayout(w)
     layout.setContentsMargins(0, 0, 0, 0)
@@ -46,7 +47,7 @@ def _small_button(icon_name: str, tip: str, slot, color: str = icons.DEFAULT_COL
 
 class DebugView(DockView):
     view_id = "debug"
-    title = "Debug"
+    title = N_("Debug")
     icon_name = "bug"
     default_area = Qt.BottomDockWidgetArea
     tab_group = "bottom"
@@ -61,7 +62,7 @@ class DebugView(DockView):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # --- kontroller (attach_actions ile doldurulur) --------------------
+        # --- controls (filled by attach_actions) ---------------------------
         top = QHBoxLayout()
         top.setContentsMargins(6, 0, 10, 0)
         self._toolbar = QToolBar()
@@ -79,18 +80,18 @@ class DebugView(DockView):
         line.setStyleSheet("background: #1e1f22;")
         root.addWidget(line)
 
-        # --- çerçeveler ----------------------------------------------------
+        # --- frames --------------------------------------------------------
         self._frames = QListWidget()
         self._frames.currentRowChanged.connect(self._select_frame)
-        frames_pane, self._frames_label = _pane("Çerçeveler", self._frames)
+        frames_pane, self._frames_label = _pane(tr("Frames"), self._frames)
 
-        # --- değişkenler + ifade değerlendirme ------------------------------
+        # --- variables + expression evaluation -----------------------------
         self._eval_input = QLineEdit()
-        self._eval_input.setPlaceholderText("İfade değerlendir (Enter) — ör. m.score, SCREEN.best_score('x.png')")
+        self._eval_input.setPlaceholderText(tr("Evaluate expression (Enter) — e.g. m.score, SCREEN.best_score('x.png')"))
         self._eval_input.returnPressed.connect(self._submit_eval)
         self._eval_input.setClearButtonEnabled(True)
         self._tree = QTreeWidget()
-        self._tree.setHeaderLabels(["İsim", "Tip", "Değer"])
+        self._tree.setHeaderLabels([tr("Name"), tr("Type"), tr("Value")])
         self._tree.setRootIsDecorated(False)
         self._tree.setColumnWidth(0, 180)
         self._tree.setColumnWidth(1, 110)
@@ -101,15 +102,15 @@ class DebugView(DockView):
         vb.setSpacing(4)
         vb.addWidget(self._eval_input)
         vb.addWidget(self._tree, 1)
-        vars_pane, self._vars_label = _pane("Değişkenler", vars_body, [
-            _small_button("trash", "Değerlendirme sonuçlarını temizle", self._clear_evals)])
+        vars_pane, self._vars_label = _pane(tr("Variables"), vars_body, [
+            _small_button("trash", tr("Clear evaluation results"), self._clear_evals)])
 
-        # --- breakpoint'ler -------------------------------------------------
+        # --- breakpoints ---------------------------------------------------
         self._bps = QListWidget()
         self._bps.itemDoubleClicked.connect(self._open_breakpoint)
-        bp_pane, self._bp_label = _pane("Breakpoint'ler", self._bps, [
-            _small_button("minimize", "Seçili breakpoint'i kaldır", self._remove_breakpoint),
-            _small_button("trash", "Tüm breakpoint'leri kaldır", self.ctx.breakpoints.clear)])
+        bp_pane, self._bp_label = _pane(tr("Breakpoints"), self._bps, [
+            _small_button("minimize", tr("Remove the selected breakpoint"), self._remove_breakpoint),
+            _small_button("trash", tr("Remove all breakpoints"), self.ctx.breakpoints.clear)])
 
         split = QSplitter(Qt.Horizontal)
         split.addWidget(frames_pane)
@@ -124,8 +125,8 @@ class DebugView(DockView):
 
         self._stack: List[dict] = []
         self._frame = 0
-        self._evals: List[Tuple[str, str, bool]] = []   # (ifade, değer, başarılı)
-        self._pending: Dict[int, str] = {}              # eval id -> ifade
+        self._evals: List[Tuple[str, str, bool]] = []   # (expression, value, succeeded)
+        self._pending: Dict[int, str] = {}              # eval id -> expression
 
         bus = self.ctx.bus
         bus.debug_paused.connect(self._on_paused)
@@ -138,15 +139,15 @@ class DebugView(DockView):
         self._update_state(SessionState.IDLE)
         return w
 
-    # ---- kontroller ------------------------------------------------------ #
+    # ---- controls -------------------------------------------------------- #
     def attach_actions(self, actions: Dict[str, QAction]) -> None:
         tb = self._toolbar
         s = self.ctx.session
 
-        # F5 hem "başlat" hem "devam"dır; burada ikisi ayrı düğme olarak gösterilir
-        self._start = QAction(icons.icon("bug", "#5fb865"), "Debug başlat (F5)", self)
+        # F5 is both "start" and "resume"; here they are shown as separate buttons
+        self._start = QAction(icons.icon("bug", "#5fb865"), tr("Start debugging (F5)"), self)
         self._start.triggered.connect(actions["debug"].trigger)
-        self._resume = QAction(icons.icon("resume", "#5fb865"), "Devam (F5)", self)
+        self._resume = QAction(icons.icon("resume", "#5fb865"), tr("Resume (F5)"), self)
         self._resume.triggered.connect(actions["debug"].trigger)
         tb.addAction(self._start)
         tb.addAction(self._resume)
@@ -169,11 +170,11 @@ class DebugView(DockView):
     def _update_state(self, state) -> None:
         debugging = self.ctx.session.is_debugging
         if state is SessionState.IDLE:
-            text = "Çalışmıyor — F5 ile debug başlatın"
+            text = tr("Not running — press F5 to start debugging")
         elif state is SessionState.PAUSED:
             text = self._location_text()
         else:
-            text = "● Çalışıyor…" if debugging else "● Çalışıyor (debug olmadan)"
+            text = "● " + (tr("Running…") if debugging else tr("Running (without debugging)"))
         self._state.setText(text)
         paused = state is SessionState.PAUSED
         self._eval_input.setEnabled(paused)
@@ -182,11 +183,11 @@ class DebugView(DockView):
 
     def _location_text(self) -> str:
         if not self._stack:
-            return "‖ Duraklatıldı"
+            return "‖ " + tr("Paused")
         f = self._stack[0]
-        return f"‖ Duraklatıldı · {os.path.basename(f['file'])}:{f['line']}"
+        return f"‖ {tr('Paused')} · {os.path.basename(f['file'])}:{f['line']}"
 
-    # ---- olaylar --------------------------------------------------------- #
+    # ---- events ---------------------------------------------------------- #
     def _on_paused(self, msg):
         self._stack = msg.get("stack", [])
         self._frame = 0
@@ -199,7 +200,7 @@ class DebugView(DockView):
             self._frames.addItem(item)
         self._frames.setCurrentRow(0)
         self._frames.blockSignals(False)
-        self._frames_label.setText(f"Çerçeveler ({len(self._stack)})")
+        self._frames_label.setText(f"{tr('Frames')} ({len(self._stack)})")
         if self._stack:
             self._show_variables(self._stack[0])
         self._update_state(SessionState.PAUSED)
@@ -214,8 +215,8 @@ class DebugView(DockView):
         self._tree.clear()
         self._evals.clear()
         self._pending.clear()
-        self._frames_label.setText("Çerçeveler")
-        self._vars_label.setText("Değişkenler")
+        self._frames_label.setText(tr("Frames"))
+        self._vars_label.setText(tr("Variables"))
 
     def _select_frame(self, row):
         if 0 <= row < len(self._stack):
@@ -225,7 +226,7 @@ class DebugView(DockView):
             self.ctx.bus.open_file_requested.emit(frame["file"], int(frame["line"]))
             self._show_variables(frame)
 
-    # ---- değişkenler ----------------------------------------------------- #
+    # ---- variables ------------------------------------------------------- #
     def _show_variables(self, frame):
         self._tree.clear()
         for expr, value, ok in self._evals:
@@ -241,7 +242,7 @@ class DebugView(DockView):
             item.setForeground(1, QBrush(QColor("#868a91")))
             item.setToolTip(2, v["value"])
             self._tree.addTopLevelItem(item)
-        self._vars_label.setText(f"Değişkenler ({len(variables)})")
+        self._vars_label.setText(f"{tr('Variables')} ({len(variables)})")
 
     def _submit_eval(self):
         text = self._eval_input.text().strip()
@@ -254,12 +255,12 @@ class DebugView(DockView):
     def _on_eval(self, msg):
         expr = self._pending.pop(msg.get("id"), None)
         if expr is not None:
-            value = (msg.get("value") or "").strip() or "(değer yok)"
+            value = (msg.get("value") or "").strip() or tr("(no value)")
             self._evals.insert(0, (expr, value, bool(msg.get("ok"))))
             del self._evals[self.MAX_EVALS:]
         if self._stack:
             frame = self._stack[self._frame]
-            if msg.get("variables") is not None:   # exec ile değişken değişmiş olabilir
+            if msg.get("variables") is not None:   # a variable may have changed via exec
                 frame = dict(frame, variables=msg["variables"])
                 self._stack[self._frame] = frame
             self._show_variables(frame)
@@ -269,7 +270,7 @@ class DebugView(DockView):
         if self._stack:
             self._show_variables(self._stack[self._frame])
 
-    # ---- breakpoint'ler -------------------------------------------------- #
+    # ---- breakpoints ----------------------------------------------------- #
     def _refresh_breakpoints(self):
         self._bps.clear()
         project = self.ctx.project
@@ -283,8 +284,8 @@ class DebugView(DockView):
             if muted:
                 item.setForeground(QBrush(QColor("#6f737a")))
             self._bps.addItem(item)
-        label = f"Breakpoint'ler ({len(items)})" if items else "Breakpoint'ler"
-        self._bp_label.setText(f"{label} — kapalı" if muted else label)
+        label = f"{tr('Breakpoints')} ({len(items)})" if items else tr("Breakpoints")
+        self._bp_label.setText(f"{label} — {tr('muted')}" if muted else label)
 
     def _open_breakpoint(self, item):
         path, line = item.data(Qt.UserRole)

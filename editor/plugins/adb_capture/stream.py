@@ -1,20 +1,20 @@
-"""H.264 video akışı ile hızlı ekran yakalama (`adb exec-out screenrecord --output-format=h264`).
+"""Fast screen capture with an H.264 video stream (`adb exec-out screenrecord --output-format=h264`).
 
-Neden: `screencap` her karede ~8 MB sıkıştırılmamış veri taşır (1080p'de ~3 FPS). screenrecord cihazın
-donanım kodlayıcısıyla H.264 akışı üretir; ~0.5 MB/sn ile 30-40 FPS alınır. Görüntü Android'in içinden
-geldiği için emülatör penceresi simge durumunda / görünmezken de çalışır (screencap gibi).
+Why: `screencap` transfers ~8 MB of uncompressed data per frame (~3 FPS at 1080p). screenrecord produces
+an H.264 stream with the device's hardware encoder; ~0.5 MB/s gives 30-40 FPS. Since the image comes from
+inside Android, it also works while the emulator window is minimized / hidden (like screencap).
 
-Nasıl:
-    screenrecord stdout ─> yerel TCP soketi ─> cv2.VideoCapture (OpenCV'nin FFmpeg'i) ─> son kare
-    Ek bağımlılık yoktur. Okuyucu thread akışı sürekli çözer ve yalnızca en son kareyi tutar; böylece
-    tüketici yavaş kalsa bile gecikme birikmez.
+How:
+    screenrecord stdout ─> local TCP socket ─> cv2.VideoCapture (OpenCV's FFmpeg) ─> latest frame
+    No extra dependency. The reader thread decodes the stream continuously and keeps only the latest
+    frame; so latency does not pile up even if the consumer is slow.
 
-Sınırlamalar ve çözümleri:
-  - Android 10 ve öncesinde tek kayıt en fazla 180 sn sürer. Oturum dolmadan yenisi paralel başlatılır,
-    ilk karesi gelince devralır: akışta boşluk olmaz.
-  - screenrecord yalnızca ekran değiştiğinde kare üretir. Ekran durağansa son kare geçerli kalır.
-  - Akış başlayamazsa (screenrecord yok, çözülemedi) ya da henüz ilk kare gelmediyse grab()
-    klasik `screencap` ile yanıt verir; script'ler hiçbir durumda kare alamadan kalmaz.
+Limitations and workarounds:
+  - On Android 10 and earlier a single recording lasts at most 180 s. A new session is started in
+    parallel before it expires and takes over when its first frame arrives: no gap in the stream.
+  - screenrecord only produces frames when the screen changes. If the screen is static the last frame stays valid.
+  - If the stream cannot start (no screenrecord, not decodable) or no first frame has arrived yet, grab()
+    answers with the classic `screencap`; scripts are never left without a frame.
 """
 
 from __future__ import annotations
@@ -29,11 +29,12 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-# OpenCV bu değişkeni VideoCapture açılırken okur: tamponlama olmasın, akış analizi beklenmesin
+# OpenCV reads this variable when opening VideoCapture: no buffering, no waiting for stream analysis
 os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS",
                       "fflags;nobuffer|flags;low_delay|probesize;32|analyzeduration;0")
 import cv2  # noqa: E402
 
+from ...i18n import tr  # noqa: E402
 from .adb import AdbDevice  # noqa: E402
 from .sources import AdbScreencapSource, CaptureError, FrameSource, ScreencapFormat  # noqa: E402
 
@@ -43,9 +44,10 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 class _ChildReaper:
-    """Windows: alt süreçleri bir Job Object'e bağlar; bu süreç (IDE ya da script) nasıl biterse
-    bitsin (Durdur ile öldürülse bile) screenrecord süreçleri de kapanır. Ekran durağanken akışta veri
-    olmadığından adb kopan bağlantıyı fark etmez; bu olmadan süreç 180 sn boyunca asılı kalırdı."""
+    """Windows: attaches child processes to a Job Object; however this process (IDE or script) ends
+    (even when killed with Stop) the screenrecord processes are closed too. While the screen is static
+    there is no data in the stream, so adb does not notice a dropped connection; without this the
+    process would hang for 180 s."""
 
     _job = None
 
@@ -88,11 +90,11 @@ class _ChildReaper:
                 k32.AssignProcessToJobObject(wintypes.HANDLE(cls._job), wintypes.HANDLE(handle))
                 k32.CloseHandle(wintypes.HANDLE(handle))
         except Exception as e:  # noqa: BLE001
-            log.debug("Job Object kurulamadı: %s", e)
+            log.debug(tr("Job Object could not be created: %s"), e)
 
 
 class _StreamSession:
-    """Tek bir screenrecord süreci + çözücü. Kareleri sahibine (AdbStreamSource) iletir."""
+    """A single screenrecord process + decoder. Passes frames to its owner (AdbStreamSource)."""
 
     def __init__(self, owner: "AdbStreamSource", time_limit: int):
         self._owner = owner
@@ -116,7 +118,7 @@ class _StreamSession:
         threading.Thread(target=self._decode, args=(port,), daemon=True, name="screenrecord-decode").start()
 
     def _pump(self) -> None:
-        """screenrecord çıktısını yerel sokete aktarır (OpenCV stdin okuyamaz, tcp:// okuyabilir)."""
+        """Pipes the screenrecord output into a local socket (OpenCV cannot read stdin but can read tcp://)."""
         conn = None
         try:
             self._server.settimeout(15)
@@ -142,7 +144,7 @@ class _StreamSession:
         try:
             cap = cv2.VideoCapture(f"tcp://127.0.0.1:{port}", cv2.CAP_FFMPEG)
             if not cap.isOpened():
-                raise CaptureError("H.264 akışı açılamadı")
+                raise CaptureError(tr("H.264 stream could not be opened"))
             while self.alive:
                 ok, frame = cap.read()
                 if not ok:
@@ -150,7 +152,7 @@ class _StreamSession:
                 self.first_frame.set()
                 self._owner._on_frame(self, frame)
         except Exception as e:  # noqa: BLE001
-            log.debug("Akış oturumu hata ile bitti: %s", e)
+            log.debug(tr("Stream session ended with an error: %s"), e)
         finally:
             if cap is not None:
                 cap.release()
@@ -170,11 +172,11 @@ class _StreamSession:
 
 
 class AdbStreamSource(FrameSource):
-    """screenrecord H.264 akışından kare veren kaynak. grab() en son kareyi hemen döndürür."""
+    """Source delivering frames from the screenrecord H.264 stream. grab() returns the latest frame immediately."""
 
-    TIME_LIMIT = 180          # Android <= 10 üst sınırı
-    ROTATE_AFTER = 165        # bu kadar saniye sonra yeni oturum paralel başlatılır
-    FIRST_FRAME_TIMEOUT = 1.5     # akış ısınana kadar uzun bekleme; screencap zaten ~0.3 sn'de doğru kare verir
+    TIME_LIMIT = 180          # upper limit on Android <= 10
+    ROTATE_AFTER = 165        # after this many seconds a new session is started in parallel
+    FIRST_FRAME_TIMEOUT = 1.5     # no long wait while the stream warms up; screencap gives a correct frame in ~0.3 s anyway
     RESTART_BACKOFF = (1.0, 2.0, 5.0, 10.0)
 
     def __init__(self, device: AdbDevice, bit_rate: int = 8_000_000, size: Optional[Tuple[int, int]] = None,
@@ -228,7 +230,7 @@ class AdbStreamSource(FrameSource):
         self.open()
 
     def grab(self) -> np.ndarray:
-        """En son kare. Akış henüz kare vermediyse kısa süre bekler, gelmezse screencap kullanır."""
+        """Latest frame. If the stream has no frame yet, waits briefly, then falls back to screencap."""
         if self._closed:
             self.open()
         with self._lock:
@@ -237,16 +239,16 @@ class AdbStreamSource(FrameSource):
             frame = self._frame
         if frame is not None:
             return frame
-        log.debug("Akıştan henüz kare gelmedi; screencap kullanılıyor")
+        log.debug(tr("No frame from the stream yet; using screencap"))
         return self._fallback.grab()
 
-    # ---- canlı görüntü için ------------------------------------------------ #
+    # ---- for the live view ------------------------------------------------ #
     @property
     def frame_index(self) -> int:
         return self._index
 
     def wait_next(self, after_index: int, timeout: float) -> Optional[Tuple[int, np.ndarray]]:
-        """after_index'ten yeni bir kare gelene kadar bekler; (indeks, kare) ya da zaman aşımında None."""
+        """Waits for a frame newer than after_index; (index, frame), or None on timeout."""
         if self._closed:
             self.open()
         with self._lock:
@@ -260,12 +262,12 @@ class AdbStreamSource(FrameSource):
         s = self._current
         return s is not None and s.alive and s.first_frame.is_set()
 
-    # ---- oturum yönetimi --------------------------------------------------- #
+    # ---- session management ------------------------------------------------ #
     def _on_frame(self, session: _StreamSession, frame: np.ndarray) -> None:
         with self._lock:
             if self._current is None or (session is not self._current and session.first_frame.is_set()
                                          and session.started > self._current.started):
-                old, self._current = self._current, session   # yeni oturum devraldı
+                old, self._current = self._current, session   # the new session took over
                 if old is not None and old is not session:
                     threading.Thread(target=old.stop, daemon=True).start()
             if session is not self._current:
@@ -297,7 +299,7 @@ class AdbStreamSource(FrameSource):
                 current = self._current
                 alive = [s for s in self._sessions if s.alive]
             if current is None and not alive:
-                # hiç oturum yok: (yeniden) başlat
+                # no session at all: (re)start
                 if self._failures:
                     delay = self.RESTART_BACKOFF[min(self._failures - 1, len(self.RESTART_BACKOFF) - 1)]
                     if self._stop.wait(delay):
@@ -306,19 +308,19 @@ class AdbStreamSource(FrameSource):
                 try:
                     pending = self._start_session()
                 except OSError as e:
-                    log.warning("screenrecord başlatılamadı: %s", e)
+                    log.warning(tr("screenrecord could not be started: %s"), e)
             elif current is not None and (pending is None or not pending.alive or pending is current) and \
                     time.monotonic() - current.started > self.ROTATE_AFTER:
-                # süre dolmadan yeni oturumu paralel başlat; ilk karesi gelince devralır
+                # start a new session in parallel before the time is up; it takes over on its first frame
                 try:
                     pending = self._start_session()
                 except OSError as e:
-                    log.warning("Yeni screenrecord oturumu başlatılamadı: %s", e)
+                    log.warning(tr("New screenrecord session could not be started: %s"), e)
             self._stop.wait(0.5)
 
 
 def create_source(device: AdbDevice, fmt: ScreencapFormat) -> FrameSource:
-    """Biçime göre kaynak: STREAM -> AdbStreamSource, RAW/PNG -> AdbScreencapSource."""
+    """Source by format: STREAM -> AdbStreamSource, RAW/PNG -> AdbScreencapSource."""
     if fmt is ScreencapFormat.STREAM:
         return AdbStreamSource(device)
     return AdbScreencapSource(device, fmt)

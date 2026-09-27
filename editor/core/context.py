@@ -1,4 +1,4 @@
-"""EditorContext: tüm servislerin tek erişim noktası (view'lar ve controller'lar bunu alır)."""
+"""EditorContext: the single access point of all services (views and controllers receive it)."""
 
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ from .telegram_bot import TelegramCommandService
 
 
 class DocumentService:
-    """Açık belgeleri yöneten bileşenin arayüzü (UI'daki EditorTabs uygular).
-    Not: Qt sınıflarıyla birlikte miras alındığı için ABCMeta kullanılmıyor."""
+    """Interface of the component managing open documents (implemented by EditorTabs in the UI).
+    Note: ABCMeta is not used because it is inherited together with Qt classes."""
 
     def current_path(self) -> Optional[str]:
         raise NotImplementedError
@@ -44,32 +44,32 @@ class EditorContext(QObject):
         super().__init__(parent)
         self.install_root = install_root
         self.settings: QSettings = create_ide_settings()   # %LOCALAPPDATA%\ScreenScript\ide.ini
-        move_session_files(install_root)                    # oturum dosyaları çalışma alanında kalmasın
+        move_session_files(install_root)                    # session files must not stay in the workspace
         self.app_config = AppConfig.load()                  # %LOCALAPPDATA%\ScreenScript\settings.json
         self.bus = EventBus(self)
         self.breakpoints = BreakpointStore(self)
         self.session = ScriptSession(install_root, parent=self)
         self.grabber = ScreenGrabber(self)
-        self.device_input = DeviceInput(self)   # Ekran view'ındaki tıklayıcı modu
+        self.device_input = DeviceInput(self)   # clicker mode of the Screen view
         self.images = ImageRepository(self)
-        self.diagnostics = DiagnosticsStore(self, self)   # kod denetimi (hata/uyarı listesi)
-        self.telegram = TelegramCommandService(self.grabber, self)   # bota gelen /capture komutları
+        self.diagnostics = DiagnosticsStore(self, self)   # code inspection (error/warning list)
+        self.telegram = TelegramCommandService(self.grabber, self)   # /capture commands sent to the bot
         self.completion: FallbackCompletionProvider = create_default_provider(None, [install_root])
         self.project: Optional[Project] = None
         self.documents: Optional[DocumentService] = None
 
         self.grabber.grabbed.connect(self.bus.screenshot_ready)
         self.grabber.failed.connect(self.bus.screenshot_failed)
-        # Görsel kaydeden/silen her bileşen images_changed yayar -> depo hemen tazelenir
+        # every component saving/deleting images emits images_changed -> the repository refreshes immediately
         self.bus.images_changed.connect(lambda: self.images.refresh())
         self.telegram.message.connect(self.bus.status_message)
         self.bus.app_config_changed.connect(self.telegram.apply_config)
         self.telegram.apply_config(self.app_config)
 
-    # ---- proje ----------------------------------------------------------- #
+    # ---- project --------------------------------------------------------- #
     def open_project(self, root: str) -> Project:
         project = Project.open(root)
-        self.app_config = AppConfig.load()   # proje eski bağlantı ayarlarını taşımış olabilir
+        self.app_config = AppConfig.load()   # the project may have migrated old connection settings
         self.bus.app_config_changed.emit(self.app_config)
         self.grabber.stop_live()
         self.grabber.close_stream()
@@ -87,12 +87,12 @@ class EditorContext(QObject):
         if self.project:
             self.project.save()
             self.bus.project_config_changed.emit(self.project)
-            self.images.set_project(self.project)   # görsel klasörleri değişmiş olabilir
+            self.images.set_project(self.project)   # image folders may have changed
 
     def save_app_config(self, config: AppConfig) -> None:
         config.save()
         self.app_config = config
-        if self.grabber.is_live:   # bağlantı ayarları değişmiş olabilir: yeni ayarlarla sürdür
+        if self.grabber.is_live:   # connection settings may have changed: continue with the new settings
             self.grabber.stop_live()
             self.grabber.start_live(config)
         self.bus.app_config_changed.emit(config)
@@ -108,12 +108,12 @@ class EditorContext(QObject):
         self.settings.setValue("recent_projects", [root] + items[:9])
 
     def grab_screen(self) -> None:
-        """Tek kare yakalar."""
+        """Captures a single frame."""
         if self.project:
             self.grabber.grab(self.app_config)
 
     def toggle_live_screen(self) -> None:
-        """Canlı görüntüyü başlatır / durdurur (durdurunca son kare ekranda kalır)."""
+        """Starts / stops the live view (the last frame stays on screen when stopped)."""
         if self.grabber.is_live:
             self.grabber.stop_live()
         elif self.project:

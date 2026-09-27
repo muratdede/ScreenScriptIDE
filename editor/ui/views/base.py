@@ -1,13 +1,15 @@
-"""Tüm yerleşik pencerelerin (view) tabanı.
+"""Base of all built-in windows (views).
 
-Yeni view eklemek:
+Adding a new view:
     class MyView(DockView):
-        view_id = "my_view"; title = "Benim"; icon_name = "file"; default_area = Qt.RightDockWidgetArea
-        def build(self): return QLabel("merhaba")
-ve MainWindow'a view_classes=[..., MyView] verin (ya da views.DEFAULT_VIEWS'e ekleyin).
+        view_id = "my_view"; title = N_("Mine"); icon_name = "file"; default_area = Qt.RightDockWidgetArea
+        def build(self): return QLabel(tr("hello"))
+and pass view_classes=[..., MyView] to MainWindow (or add it to views.DEFAULT_VIEWS).
 
-IntelliJ tarzı: her view'ın kenar şeridinde (stripe) bir ikonu vardır; aynı gruptaki (tab_group)
-view'lardan aynı anda yalnızca biri görünür. Başlık çubuğuna view'a özgü düğmeler title_actions() ile eklenir.
+The class attribute `title` is an English source string marked with N_(); instances hold the translation.
+
+IntelliJ style: every view has an icon on the side stripe; only one view of the same group (tab_group)
+is visible at a time. View specific buttons are added to the title bar with title_actions().
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from PySide6.QtGui import QAction, QColor, QPainter, QPen
 from PySide6.QtWidgets import QDockWidget, QHBoxLayout, QLabel, QToolButton, QWidget
 
 from ...core.context import EditorContext
+from ...i18n import tr
 from .. import icons
 
 _FLOATING_FRAME_WIDTH = 2
@@ -44,13 +47,13 @@ class _TitleBar(QWidget):
         dock.windowTitleChanged.connect(self._label.setText)
 
         self.pin_btn = self.add_button(icons.icon("pin", "#9da0a8"),
-                                       "Her zaman üstte (ana pencere küçültülse de açık kalır)", dock.set_pinned)
+                                       tr("Always on top (stays open even when the main window is minimized)"), dock.set_pinned)
         self.pin_btn.setCheckable(True)
         self.pin_btn.setVisible(False)
-        float_btn = self.add_button(icons.icon("float", "#9da0a8"), "Ayrı pencerede aç / geri yerleştir",
+        float_btn = self.add_button(icons.icon("float", "#9da0a8"), tr("Open in a separate window / dock back"),
                                     lambda: dock.setFloating(not dock.isFloating()))
         float_btn.setVisible(bool(dock.features() & QDockWidget.DockWidgetFloatable))
-        self.add_button(icons.icon("minimize", "#9da0a8"), "Gizle", dock.hide)
+        self.add_button(icons.icon("minimize", "#9da0a8"), tr("Hide"), dock.hide)
 
     def add_button(self, icon, tip, slot, index: int = -1) -> QToolButton:
         b = QToolButton()
@@ -78,8 +81,8 @@ class _TitleBar(QWidget):
 
 
 def _set_window_owner(widget: QWidget, owner: QWidget = None) -> None:
-    """Windows'ta sahipli (owned) pencereler sahibi küçültülünce gizlenir; sahipliği kaldırmak
-    ayrık pencerenin ana pencereden bağımsız açık kalmasını sağlar."""
+    """On Windows, owned windows are hidden when their owner is minimized; removing the owner keeps
+    the floating window open independently of the main window."""
     if sys.platform != "win32":
         return
     import ctypes
@@ -90,18 +93,19 @@ def _set_window_owner(widget: QWidget, owner: QWidget = None) -> None:
 
 class DockView(QDockWidget):
     view_id: str = ""
-    title: str = ""
-    icon_name: str = "file"      # icons.py'deki ikon adı (kenar şeridi)
+    title: str = ""             # English source text (N_); translated per instance
+    icon_name: str = "file"      # icon name in icons.py (side stripe)
     default_area: Qt.DockWidgetArea = Qt.LeftDockWidgetArea
-    tab_group: str = ""          # aynı gruptaki view'lardan aynı anda biri görünür
-    stripe_bottom: bool = False  # sol şeritte alt bölüme yerleşsin (IntelliJ'deki Run/Terminal gibi)
-    shortcut: str = ""           # görünüm menüsünde kısayol (ör. "Alt+1")
-    pinnable: bool = False       # ayrık penceredeyken "her zaman üstte" raptiyesi gösterilsin
+    tab_group: str = ""          # only one view of the same group is visible at a time
+    stripe_bottom: bool = False  # placed in the bottom section of the left stripe (like Run/Terminal in IntelliJ)
+    shortcut: str = ""           # shortcut in the view menu (e.g. "Alt+1")
+    pinnable: bool = False       # show the "always on top" pin while floating
 
     def __init__(self, ctx: EditorContext, parent=None):
+        self.title = tr(type(self).title)   # instance attribute: the translated title
         super().__init__(self.title, parent)
         if not self.view_id:
-            raise TypeError(f"{type(self).__name__}.view_id tanımlı değil")
+            raise TypeError(f"{type(self).__name__}.view_id is not defined")
         self.setObjectName(self.view_id)
         self.ctx = ctx
         self._pinned = False
@@ -110,19 +114,19 @@ class DockView(QDockWidget):
         self._title_bar = _TitleBar(self)
         self.setTitleBarWidget(self._title_bar)
         self.setWidget(self.build())
-        # view'a özgü başlık düğmeleri (gizle/ayır düğmelerinden önce)
+        # view specific title buttons (before the hide/float buttons)
         insert_at = self._title_bar._layout.count() - 2
         for action in self.title_actions():
             self._title_bar.add_action(action, insert_at)
             insert_at += 1
 
     def _update_floating_frame(self, floating: bool) -> None:
-        # ayrık pencerenin çerçevesi arka plandan ayırt edilsin diye kalın ve açık renkli
-        # (stylesheet yalnızca çerçeve genişliğini ayırır; çizgiyi paintEvent çizer)
+        # the floating window's frame is thick and light so it stands out from the background
+        # (the stylesheet only reserves the frame width; paintEvent draws the line)
         self.setStyleSheet(_FLOATING_FRAME if floating else "")
         self._title_bar.pin_btn.setVisible(floating and self.pinnable)
         if not floating and self._pinned:
-            # yerleştirilince QDockWidget pencere bayraklarını zaten sıfırlar
+            # QDockWidget resets the window flags anyway when docked
             self._pinned = False
             self._title_bar.pin_btn.setChecked(False)
             self.pinned_changed(False)
@@ -132,14 +136,14 @@ class DockView(QDockWidget):
         return self._pinned
 
     def set_pinned(self, on: bool) -> None:
-        """Ayrık pencereyi her zaman üstte tutar; ana pencere küçültülse de açık kalır."""
+        """Keeps the floating window always on top; it stays open even when the main window is minimized."""
         on = bool(on) and self.isFloating()
         self._title_bar.pin_btn.setChecked(on)
         if on == self._pinned:
             return
         self._pinned = on
         geometry = self.geometry()
-        self.setWindowFlag(Qt.WindowStaysOnTopHint, on)   # pencereyi gizler; yeniden göster
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, on)   # hides the window; show it again
         self.setGeometry(geometry)
         self.show()
         _set_window_owner(self, None if on else self.parentWidget())
@@ -147,7 +151,7 @@ class DockView(QDockWidget):
         self.pinned_changed(on)
 
     def pinned_changed(self, pinned: bool) -> None:
-        """Raptiye açılıp kapanınca çağrılır; alt sınıflar sade görünüme geçmek için ezebilir."""
+        """Called when the pin is toggled; subclasses may override it to switch to a compact look."""
 
     def paintEvent(self, e):
         super().paintEvent(e)
@@ -161,15 +165,15 @@ class DockView(QDockWidget):
         p.drawRect(QRectF(self.rect()).adjusted(half, half, -half, -half))
 
     def build(self) -> QWidget:
-        """View'ın içeriğini oluşturur. Alt sınıflar ezmeli."""
+        """Builds the content of the view. Subclasses must override it."""
         raise NotImplementedError
 
     def title_actions(self) -> List[QAction]:
-        """Başlık çubuğunda gösterilecek eylemler (ör. temizle, yenile)."""
+        """Actions shown in the title bar (e.g. clear, refresh)."""
         return []
 
     def attach_actions(self, actions: Dict[str, QAction]) -> None:
-        """MainWindow, genel eylemleri (run, debug, step_over, ...) oluşturduktan sonra çağırır."""
+        """Called by MainWindow after it has created the global actions (run, debug, step_over, ...)."""
 
     def make_action(self, icon_name: str, text: str, slot, color: str = icons.DEFAULT_COLOR) -> QAction:
         a = QAction(icons.icon(icon_name, color), text, self)

@@ -1,9 +1,10 @@
-"""Dosya / klasör yeniden adlandırma penceresi (proje ağacında F2).
+"""File / folder rename dialog (F2 in the project tree).
 
-Görseller için koddaki "images/eski.png" ve "eski.png" string'lerini de güncelleyebilir."""
+For images it can also update the "images/old.png" and "old.png" strings in code."""
 
 from __future__ import annotations
 
+import html
 import os
 from typing import Dict, List, Tuple
 
@@ -13,12 +14,13 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QLabel, QLi
 from ..core import search
 from ..core.context import EditorContext
 from ..core.project import Project
+from ..i18n import tr
 
 INVALID_CHARS = set('\\/:*?"<>|')
 
 
 def image_references(project: Project, path: str) -> Tuple[Dict[str, str], List[search.LineMatch]]:
-    """Görselin koddaki olası yazımları (göreli yol ve yalın ad) ve bulunduğu yerler."""
+    """Possible spellings of the image in code (relative path and bare name) and where they occur."""
     rel = project.relative(path).replace(os.sep, "/")
     forms = {rel: rel, os.path.basename(path): os.path.basename(path)}
     pattern = search.string_literal_pattern(list(forms))
@@ -32,15 +34,15 @@ class RenameDialog(QDialog):
         self._dir = os.path.dirname(path)
         is_dir = os.path.isdir(path)
         project = ctx.project
-        self.setWindowTitle("Yeniden Adlandır")
+        self.setWindowTitle(tr("Rename"))
         self.setMinimumWidth(460)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(18, 16, 18, 14)
         layout.setSpacing(8)
-        kind = "klasörü" if is_dir else "dosyasını"
         rel = project.relative(path).replace(os.sep, "/") if project and project.contains(path) else path
-        title = QLabel(f"<b>{os.path.basename(path)}</b> {kind} yeniden adlandır")
+        name_html = f"<b>{html.escape(os.path.basename(path))}</b>"
+        title = QLabel(tr("Rename folder {name}", name=name_html) if is_dir else tr("Rename file {name}", name=name_html))
         layout.addWidget(title)
         where = QLabel(rel)
         where.setObjectName("hint")
@@ -53,7 +55,7 @@ class RenameDialog(QDialog):
         self._error.setStyleSheet("color: #db5c5c;")
         layout.addWidget(self._error)
 
-        # görsel referansları
+        # image references
         self.refs = QCheckBox()
         self.refs.setVisible(False)
         self._has_refs = False
@@ -62,7 +64,8 @@ class RenameDialog(QDialog):
             _forms, self._matches = image_references(project, path)
             if self._matches:
                 files = len({m.path for m in self._matches})
-                self.refs.setText(f"Koddaki referansları da güncelle ({len(self._matches)} yer, {files} dosya)")
+                self.refs.setText(tr("Also update references in code ({places} places, {files} files)",
+                                      places=len(self._matches), files=files))
                 self.refs.setToolTip("\n".join(f"{project.relative(m.path)}:{m.line}  {m.line_text.strip()}"
                                                for m in self._matches[:20]))
                 self.refs.setChecked(True)
@@ -71,13 +74,13 @@ class RenameDialog(QDialog):
         layout.addWidget(self.refs)
 
         self._buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self._buttons.button(QDialogButtonBox.Ok).setText("Yeniden Adlandır")
-        self._buttons.button(QDialogButtonBox.Cancel).setText("İptal")
+        self._buttons.button(QDialogButtonBox.Ok).setText(tr("Rename"))
+        self._buttons.button(QDialogButtonBox.Cancel).setText(tr("Cancel"))
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
         layout.addWidget(self._buttons)
 
-        # IntelliJ gibi: uzantı hariç ad seçili gelir
+        # like IntelliJ: the name without the extension is preselected
         stem = os.path.splitext(os.path.basename(path))[0] if not is_dir else os.path.basename(path)
         self.name_edit.setSelection(0, len(stem) or len(self.name_edit.text()))
         self._validate()
@@ -98,14 +101,14 @@ class RenameDialog(QDialog):
         name = self.new_name
         error = ""
         if not name:
-            error = "Ad boş olamaz."
+            error = tr("The name cannot be empty.")
         elif any(c in INVALID_CHARS for c in name):
-            error = "Ad şu karakterleri içeremez: \\ / : * ? \" < > |"
+            error = tr("The name cannot contain these characters: {chars}", chars="\\ / : * ? \" < > |")
         elif name in (".", ".."):
-            error = "Geçersiz ad."
+            error = tr("Invalid name.")
         elif name != os.path.basename(self._path) and os.path.exists(self.new_path) \
                 and os.path.normcase(self.new_path) != os.path.normcase(self._path):
-            error = f"“{name}” zaten var."
+            error = tr("“{name}” already exists.", name=name)
         self._error.setText(error)
         self._error.setVisible(bool(error))
         self._buttons.button(QDialogButtonBox.Ok).setEnabled(not error and name != os.path.basename(self._path))

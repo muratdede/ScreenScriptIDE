@@ -1,5 +1,5 @@
-"""Ayarlar › Editör › Denetimler: kapatılabilir uyarı türlerinin listesi (IntelliJ "Inspections" gibi).
-Yalnızca uyarılar listelenir; hatalar (sözdizimi, tanımsız isim, …) her zaman gösterilir."""
+"""Settings › Editor › Inspections: list of warning types that can be disabled (like IntelliJ "Inspections").
+Only warnings are listed; errors (syntax, undefined name, …) are always shown."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (QHBoxLayout, QLabel, QLineEdit, QPushButton, QSiz
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from ..core.diagnostics import WARNING_TYPES
+from ..i18n import tr
 from . import icons
 from .settings_dialog import hint
 from .theme import THEME
@@ -25,13 +26,13 @@ class InspectionsPanel(QWidget):
         warning_icon = icons.icon("warning", THEME.warning.name())
 
         self._filter = QLineEdit()
-        self._filter.setPlaceholderText("Denetimlerde ara")
+        self._filter.setPlaceholderText(tr("Search inspections"))
         self._filter.setClearButtonEnabled(True)
         self._filter.addAction(icons.icon("search", "#9da0a8"), QLineEdit.LeadingPosition)
         self._filter.textChanged.connect(self._apply_filter)
-        enable_all = QPushButton("Tümünü aç")
+        enable_all = QPushButton(tr("Enable all"))
         enable_all.clicked.connect(lambda: self._set_all(True))
-        disable_all = QPushButton("Tümünü kapat")
+        disable_all = QPushButton(tr("Disable all"))
         disable_all.clicked.connect(lambda: self._set_all(False))
 
         self.tree = QTreeWidget()
@@ -42,16 +43,16 @@ class InspectionsPanel(QWidget):
         for wt in WARNING_TYPES:
             group = groups.get(wt.group)
             if group is None:
-                group = groups[wt.group] = QTreeWidgetItem(self.tree, [wt.group])
+                group = groups[wt.group] = QTreeWidgetItem(self.tree, [tr(wt.group)])
                 group.setFlags(group.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsAutoTristate)
                 font = group.font(0)
                 font.setBold(True)
                 group.setFont(0, font)
-            item = QTreeWidgetItem(group, [wt.title])
+            item = QTreeWidgetItem(group, [tr(wt.title)])
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setIcon(0, warning_icon)
             item.setData(0, _CODE_ROLE, wt.code)
-            item.setToolTip(0, f"{wt.description}\n({wt.code})")
+            item.setToolTip(0, f"{tr(wt.description)}\n({wt.code})")
             item.setCheckState(0, Qt.Unchecked if wt.code in disabled else Qt.Checked)
         self.tree.expandAll()
         self.tree.currentItemChanged.connect(self._show_description)
@@ -69,9 +70,9 @@ class InspectionsPanel(QWidget):
         top.addWidget(disable_all)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(hint("İşareti kaldırılan uyarılar editörde ve Sorunlar penceresinde gösterilmez. "
-                              "Hatalar (sözdizimi, tanımsız isim, eksik argüman, bulunamayan modül, …) "
-                              "kapatılamaz. Tek bir satır için satır sonuna # noqa yazabilirsiniz."))
+        layout.addWidget(hint(tr("Unchecked warnings are not shown in the editor and the Problems window. "
+                                 "Errors (syntax, undefined name, missing argument, unresolved module, …) "
+                                 "cannot be disabled. For a single line you can write # noqa at the end of the line.")))
         layout.addSpacing(4)
         layout.addLayout(top)
         layout.addWidget(self.tree, 1)
@@ -87,7 +88,7 @@ class InspectionsPanel(QWidget):
     def _set_all(self, enabled: bool) -> None:
         state = Qt.Checked if enabled else Qt.Unchecked
         for it in self._items():
-            if not it.isHidden():   # filtre varsa yalnızca görünenler
+            if not it.isHidden():   # only the visible ones when filtered
                 it.setCheckState(0, state)
 
     def _apply_filter(self, text: str) -> None:

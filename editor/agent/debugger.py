@@ -1,4 +1,4 @@
-"""bdb tabanlı script debugger'ı ve editörle konuşan TCP kanalı."""
+"""bdb based script debugger and the TCP channel talking to the editor."""
 
 from __future__ import annotations
 
@@ -14,13 +14,14 @@ import types
 from typing import Callable, Dict, Iterable, List, Optional, Set
 
 from ..core.protocol import Command, Event, LineDecoder, encode
+from ..i18n import tr
 
 
 class DebugChannel:
-    """Editöre bağlanan soket. Komutlar arka plan thread'inde okunur.
+    """Socket connected to the editor. Commands are read on a background thread.
 
-    PAUSE ve SET_BREAKPOINTS script çalışırken de işlenmeli; bunlar async_handler'a gider.
-    Diğer komutlar kuyruğa girer ve debugger duraklatıldığında okunur."""
+    PAUSE and SET_BREAKPOINTS must be handled while the script runs too; they go to async_handler.
+    Other commands are queued and read when the debugger is paused."""
 
     def __init__(self, port: int, host: str = "127.0.0.1"):
         self._sock = socket.create_connection((host, port), timeout=10)
@@ -46,7 +47,7 @@ class DebugChannel:
             except OSError:
                 data = b""
             if not data:
-                # Editör kapandı ya da bağlantı koptu: script'i de sonlandır
+                # the editor closed or the connection dropped: terminate the script too
                 sys.stdout.flush()
                 os._exit(3)
             for msg in decoder.feed(data):
@@ -56,8 +57,8 @@ class DebugChannel:
 
 
 class ScriptDebugger(bdb.Bdb):
-    """Sadece kullanıcı dosyalarında durur; kütüphane (screenscript, adb_capture, stdlib)
-    çerçeveleri izlenmez, böylece script neredeyse normal hızda çalışır."""
+    """Stops only in user files; library frames (screenscript, adb_capture, stdlib) are not traced,
+    so the script runs at almost normal speed."""
 
     def __init__(self, channel: DebugChannel, user_roots: Iterable[str], library_roots: Iterable[str],
                  hidden_names: Callable[[], Set[str]], stop_on_entry: bool = False):
@@ -78,7 +79,7 @@ class ScriptDebugger(bdb.Bdb):
         self._repr.maxlist = self._repr.maxtuple = self._repr.maxdict = 30
         channel.async_handler = self._handle_async
 
-    # ---- hangi çerçeveler izlenir --------------------------------------- #
+    # ---- which frames are traced ---------------------------------------- #
     @staticmethod
     def _norm(path: str) -> str:
         return os.path.normcase(os.path.abspath(path))
@@ -107,14 +108,14 @@ class ScriptDebugger(bdb.Bdb):
         return super().stop_here(frame)
 
     def break_anywhere(self, frame):
-        # Kullanıcı çerçevelerini her zaman izle (PAUSE için gerekli); diğerlerini hiç izleme.
+        # always trace user frames (needed for PAUSE); never trace the others.
         return self._is_user(frame)
 
     def set_continue(self):
-        # bdb, breakpoint yoksa izlemeyi tamamen kapatır; biz PAUSE için açık tutuyoruz.
+        # bdb turns tracing off completely without breakpoints; we keep it on for PAUSE.
         self._set_stopinfo(self.botframe, None, -1)
 
-    # ---- breakpoint'ler -------------------------------------------------- #
+    # ---- breakpoints ----------------------------------------------------- #
     def apply_breakpoints(self, mapping: Dict[str, List[int]]) -> None:
         with self._lock:
             self.clear_all_breaks()
@@ -138,7 +139,7 @@ class ScriptDebugger(bdb.Bdb):
             os._exit(130)
         return False
 
-    # ---- duraklama ------------------------------------------------------- #
+    # ---- pausing --------------------------------------------------------- #
     def user_line(self, frame):
         if self._pause_requested:
             self._pause_requested = False
@@ -146,7 +147,7 @@ class ScriptDebugger(bdb.Bdb):
         elif self.get_breaks(self.canonic(frame.f_code.co_filename), frame.f_lineno):
             reason = "breakpoint"
         elif not self._entered and not self._stop_on_entry:
-            # bdb ilk kullanıcı satırında adım modunda başlar; giriş durması istenmiyorsa devam et
+            # bdb starts in step mode on the first user line; continue if no stop on entry is wanted
             self._entered = True
             self.set_continue()
             return
@@ -210,7 +211,7 @@ class ScriptDebugger(bdb.Bdb):
         try:
             return self._repr.repr(value)
         except Exception as e:  # noqa: BLE001
-            return f"<repr hatası: {e}>"
+            return tr("<repr error: {error}>", error=e)
 
     def _evaluate(self, msg: dict, stack: List[types.FrameType]) -> None:
         expr = msg.get("expression", "")

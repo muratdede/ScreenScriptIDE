@@ -1,13 +1,13 @@
-"""Telegram bot komutları: editör açıkken bota yazılan komutları arka plan thread'inde yanıtlar.
+"""Telegram bot commands: answers commands sent to the bot in a background thread while the editor is open.
 
-    /capture  — cihazın o anki ekran görüntüsünü fotoğraf olarak gönderir
-    /help     — komut listesi
+    /capture  — sends the device's current screenshot as a photo
+    /help     — command list
 
-Yalnızca ayarlardaki kullanıcı (telegram_username; @ad ya da sayısal chat_id) yanıt alır; diğer
-kişilerin mesajları yok sayılır. Servis getUpdates'i long polling ile tükettiği için script sürecindeki
-TelegramNotifier kullanıcıyı getUpdates'te bulamayabilir; bu yüzden görülen chat_id önbelleğe yazılır.
-Script de aynı anda getUpdates çağırırsa Telegram 409 (Conflict) döndürür; servis kısa bir beklemeyle
-yeniden dener.
+Only the user from the settings (telegram_username; @name or numeric chat_id) gets answers; messages
+from other people are ignored. Since the service consumes getUpdates with long polling, the
+TelegramNotifier in the script process may not find the user in getUpdates; therefore every seen
+chat_id is written to the cache. If the script calls getUpdates at the same time, Telegram returns
+409 (Conflict); the service retries after a short wait.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from typing import Optional, Tuple
 import cv2
 from PySide6.QtCore import QObject, Signal
 
+from ..i18n import tr
 from ..plugins.screenscript import TelegramNotifier
 
 from .app_settings import AppConfig, telegram_cache_path
@@ -29,14 +30,11 @@ log = logging.getLogger(__name__)
 
 
 class TelegramCommandService(QObject):
-    message = Signal(str)   # durum çubuğu için (thread'den yayılır; kuyruklu bağlantı)
+    message = Signal(str)   # for the status bar (emitted from the thread; queued connection)
 
-    POLL_TIMEOUT = 25        # long polling süresi (sn)
-    STALE_SECONDS = 60       # editör kapalıyken gelmiş eski komutlar yanıtlanmaz
+    POLL_TIMEOUT = 25        # long polling duration (s)
+    STALE_SECONDS = 60       # old commands that arrived while the editor was closed are not answered
     MAX_BACKOFF = 30
-    HELP = ("ScreenScript IDE komutları:\n"
-            "/capture — cihaz ekranının görüntüsünü gönderir\n"
-            "/help — bu mesaj")
 
     def __init__(self, grabber: ScreenGrabber, parent=None):
         super().__init__(parent)
@@ -45,13 +43,19 @@ class TelegramCommandService(QObject):
         self._key: Optional[Tuple] = None
         self._stop: Optional[threading.Event] = None
 
+    @staticmethod
+    def help_text() -> str:
+        return tr("ScreenScript IDE commands:\n"
+                  "/capture — sends a screenshot of the device screen\n"
+                  "/help — this message")
+
     @property
     def running(self) -> bool:
         return self._stop is not None
 
     def apply_config(self, config: AppConfig) -> None:
-        """Ayarlara göre başlatır / durdurur. Token ya da kullanıcı değiştiyse yeniden başlatır;
-        yalnızca cihaz bağlantısı değiştiyse çalışan thread yeni ayarları bir sonraki komutta kullanır."""
+        """Starts / stops according to the settings. Restarts if the token or user changed; if only
+        the device connection changed, the running thread uses the new settings on the next command."""
         self._config = config
         token = config.effective_telegram_token()
         user = config.telegram_username.strip().lstrip("@")
@@ -69,7 +73,7 @@ class TelegramCommandService(QObject):
 
     def stop(self) -> None:
         if self._stop is not None:
-            self._stop.set()   # süren long poll en geç POLL_TIMEOUT sonunda biter; thread daemon
+            self._stop.set()   # an ongoing long poll ends at most after POLL_TIMEOUT; the thread is a daemon
         self._stop = None
         self._key = None
 
@@ -79,12 +83,12 @@ class TelegramCommandService(QObject):
                                timeout=self.POLL_TIMEOUT + 10)
         offset = 0
         backoff = 1
-        log.info("Telegram komut servisi başladı (@%s)", user)
+        log.info(tr("Telegram command service started (@%s)"), user)
         while not stop.is_set():
             try:
                 updates = bot.get_updates(offset, timeout=self.POLL_TIMEOUT)
                 backoff = 1
-            except Exception as e:  # noqa: BLE001 — ağ hatası, 409 Conflict, geçersiz token ...
+            except Exception as e:  # noqa: BLE001 — network error, 409 Conflict, invalid token ...
                 log.warning("Telegram getUpdates: %s", e)
                 stop.wait(backoff)
                 backoff = min(backoff * 2, self.MAX_BACKOFF)
@@ -96,8 +100,8 @@ class TelegramCommandService(QObject):
                 try:
                     self._handle(bot, token, user, update.get("message") or {})
                 except Exception as e:  # noqa: BLE001
-                    log.warning("Telegram komutu işlenemedi: %s", e)
-        log.info("Telegram komut servisi durdu")
+                    log.warning(tr("Telegram command could not be processed: %s"), e)
+        log.info(tr("Telegram command service stopped"))
 
     def _handle(self, bot: TelegramNotifier, token: str, user: str, msg: dict) -> None:
         text = (msg.get("text") or "").strip()
@@ -106,7 +110,7 @@ class TelegramCommandService(QObject):
         if not text.startswith("/") or chat.get("type") != "private":
             return
         if not self._authorized(user, chat, sender):
-            log.info("Telegram: yetkisiz kullanıcıdan komut yok sayıldı (@%s, %s)",
+            log.info(tr("Telegram: command from an unauthorized user ignored (@%s, %s)"),
                      sender.get("username"), chat.get("id"))
             return
         chat_id = chat["id"]
@@ -120,7 +124,7 @@ class TelegramCommandService(QObject):
         if command == "/capture":
             self._send_capture(reply)
         else:
-            reply.send_text(self.HELP)
+            reply.send_text(self.help_text())
 
     @staticmethod
     def _authorized(user: str, chat: dict, sender: dict) -> bool:
@@ -133,14 +137,14 @@ class TelegramCommandService(QObject):
         try:
             image = self._grabber.capture(config)
         except Exception as e:  # noqa: BLE001
-            reply.send_text(f"Ekran görüntüsü alınamadı: {e}")
-            self.message.emit("Telegram /capture: ekran görüntüsü alınamadı")
+            reply.send_text(tr("Screenshot could not be taken: {error}", error=e))
+            self.message.emit(tr("Telegram /capture: screenshot could not be taken"))
             return
         ok, buf = cv2.imencode(".png", image)
         if not ok:
-            reply.send_text("Ekran görüntüsü PNG'ye çevrilemedi")
+            reply.send_text(tr("Screenshot could not be converted to PNG"))
             return
         h, w = image.shape[:2]
         reply.send_photo(buf.tobytes(), "screen.png",
                          caption=f"{config.host}:{config.port} — {w}x{h} — {time.strftime('%H:%M:%S')}")
-        self.message.emit("Telegram /capture: ekran görüntüsü gönderildi")
+        self.message.emit(tr("Telegram /capture: screenshot sent"))

@@ -1,4 +1,4 @@
-"""Kare tüketicileri (Observer deseni). Capturer her yeni kareyi abonelerine iletir."""
+"""Frame consumers (Observer pattern). The capturer passes every new frame to its subscribers."""
 
 from __future__ import annotations
 
@@ -11,26 +11,27 @@ from typing import Callable, Optional
 
 import cv2
 
+from ...i18n import tr
 from .frames import Frame
 
 log = logging.getLogger(__name__)
 
 
 class FrameConsumer(ABC):
-    """Kare alan her sınıfın arayüzü. on_frame capturer thread'inde çağrılır; hızlı olmalı."""
+    """Interface of every class receiving frames. on_frame is called on the capturer thread; must be fast."""
 
     @abstractmethod
     def on_frame(self, frame: Frame) -> None: ...
 
     def on_start(self) -> None:
-        """Yakalama başlarken çağrılır."""
+        """Called when capturing starts."""
 
     def on_stop(self) -> None:
-        """Yakalama dururken çağrılır."""
+        """Called when capturing stops."""
 
 
 class LatestFrameBuffer(FrameConsumer):
-    """Son kareyi thread-safe tutar. Bot/analiz kodu kareleri buradan okur."""
+    """Holds the latest frame thread-safely. Bot/analysis code reads frames from here."""
 
     def __init__(self):
         self._frame: Optional[Frame] = None
@@ -47,7 +48,7 @@ class LatestFrameBuffer(FrameConsumer):
             return self._frame
 
     def wait_next(self, after_index: int = -1, timeout: Optional[float] = None) -> Optional[Frame]:
-        """index'i after_index'ten büyük bir kare gelene kadar bekler. Zaman aşımında None döner."""
+        """Waits until a frame with index greater than after_index arrives. Returns None on timeout."""
         with self._cond:
             ok = self._cond.wait_for(
                 lambda: self._frame is not None and self._frame.index > after_index, timeout)
@@ -55,7 +56,7 @@ class LatestFrameBuffer(FrameConsumer):
 
 
 class DiskSaver(FrameConsumer):
-    """Kareleri diske kaydeder. every_seconds ile kayıt sıklığı yakalama sıklığından ayrı ayarlanır."""
+    """Saves frames to disk. every_seconds sets the save rate independently of the capture rate."""
 
     def __init__(self, out_dir: str = "shots", every_seconds: float = 0.0,
                  prefix: str = "frame", ext: str = ".png"):
@@ -76,13 +77,13 @@ class DiskSaver(FrameConsumer):
         ms = int((frame.timestamp % 1) * 1000)
         path = os.path.join(self._out_dir, f"{self._prefix}_{stamp}_{ms:03d}_{frame.index:06d}{self._ext}")
         if cv2.imwrite(path, frame.image):
-            log.info("Kaydedildi: %s", path)
+            log.info(tr("Saved: %s"), path)
         else:
-            log.error("Kaydedilemedi: %s", path)
+            log.error(tr("Could not be saved: %s"), path)
 
 
 class CallbackConsumer(FrameConsumer):
-    """Bir fonksiyonu tüketiciye çevirir: CallbackConsumer(lambda f: print(f.index))."""
+    """Turns a function into a consumer: CallbackConsumer(lambda f: print(f.index))."""
 
     def __init__(self, fn: Callable[[Frame], None]):
         self._fn = fn

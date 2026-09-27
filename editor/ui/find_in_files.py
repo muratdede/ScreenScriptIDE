@@ -1,8 +1,8 @@
-"""Dosyalarda bul / değiştir penceresi (Ctrl+Shift+F / Ctrl+Shift+R).
+"""Find / replace in files window (Ctrl+Shift+F / Ctrl+Shift+R).
 
-IntelliJ'deki "Find in Files" açılır penceresi örnek alınmıştır: üstte arama (ve değiştirme) alanı ile
-seçenekler, ortada sonuç listesi (satır parçası + dosya:satır), altta seçili sonucun önizlemesi.
-Açık editörlerdeki kaydedilmemiş metin de aranır; değiştirmeler açık editörlerde geri alınabilir yapılır.
+Modeled on IntelliJ's "Find in Files" popup: search (and replace) fields with options at the top,
+the result list (line fragment + file:line) in the middle, a preview of the selected result at the bottom.
+Unsaved text in open editors is searched too; replacements in open editors can be undone.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QComboBox, QDialog, QHBoxLayou
 from ..core import search
 from ..core.context import EditorContext
 from ..core.search import LineMatch, SearchQuery
+from ..i18n import ntr, tr
 from . import icons
 from .code_editor import CodeEditor
 from .shortcuts import shortcut
@@ -29,9 +30,9 @@ ROLE_MATCH = Qt.UserRole + 1
 
 
 def apply_text_change(ctx: EditorContext, path: str, transform) -> int:
-    """transform(text) -> (yeni metin, değişen sayısı). Dosya bir editörde açıksa değişiklik orada
-    (tek Ctrl+Z ile geri alınabilir şekilde) yapılır; editör önceden kaydedilmişse yine kaydedilir.
-    Açık değilse dosya diskte, satır sonu biçimi (LF/CRLF) korunarak güncellenir."""
+    """transform(text) -> (new text, number of changes). If the file is open in an editor the change is
+    made there (undoable with a single Ctrl+Z); if the editor was saved before, it is saved again.
+    Otherwise the file is updated on disk, keeping its line ending style (LF/CRLF)."""
     docs = ctx.documents
     editor = docs.find_editor(path) if docs and hasattr(docs, "find_editor") else None
     if editor is not None:
@@ -56,7 +57,7 @@ def apply_text_change(ctx: EditorContext, path: str, transform) -> int:
 
 
 class _ResultDelegate(QStyledItemDelegate):
-    """Satır parçasını eşleşme vurgulu, sağda dosya adı + satır numarasıyla çizer."""
+    """Draws the line fragment with the match highlighted and the file name + line number on the right."""
 
     def sizeHint(self, option, index):
         return QSize(100, QFontMetrics(THEME.code_font(10)).height() + 8)
@@ -72,7 +73,7 @@ class _ResultDelegate(QStyledItemDelegate):
         elif option.state & QStyle.State_MouseOver:
             painter.fillRect(r, QColor("#323438"))
 
-        # sağ: dosya adı + satır
+        # right: file name + line
         ui = option.font
         painter.setFont(ui)
         fm_ui = QFontMetrics(ui)
@@ -81,7 +82,7 @@ class _ResultDelegate(QStyledItemDelegate):
         painter.setPen(THEME.muted)
         painter.drawText(QRect(r.right() - rw, r.top(), rw - 8, r.height()), Qt.AlignRight | Qt.AlignVCenter, right)
 
-        # sol: satır parçası (baştaki boşluklar atılır, uzun satırlar eşleşme görünür kalacak şekilde kırpılır)
+        # left: line fragment (leading whitespace dropped, long lines clipped so the match stays visible)
         code = THEME.code_font(10)
         painter.setFont(code)
         fm = QFontMetrics(code)
@@ -111,7 +112,7 @@ class _ResultDelegate(QStyledItemDelegate):
 
 
 class _Header(QWidget):
-    """Çerçevesiz pencerenin sürüklenebilir başlığı."""
+    """Draggable header of the frameless window."""
 
     def __init__(self, dialog: QDialog):
         super().__init__(dialog)
@@ -153,63 +154,63 @@ class FindInFilesDialog(QDialog):
         root.setContentsMargins(1, 1, 1, 1)
         root.setSpacing(0)
 
-        # ---- başlık: ad + seçenekler + dosya maskesi ------------------------ #
+        # ---- header: title + options + file mask ---------------------------- #
         header = _Header(self)
         hl = QHBoxLayout(header)
         hl.setContentsMargins(14, 10, 10, 6)
         hl.setSpacing(4)
-        self._title = QLabel("Dosyalarda Bul")
+        self._title = QLabel(tr("Find in Files"))
         self._title.setObjectName("title")
         hl.addWidget(self._title)
         hl.addSpacing(12)
-        self._scope_project = QRadioButton("Proje", checked=True)
-        self._scope_open = QRadioButton("Açık dosyalar")
+        self._scope_project = QRadioButton(tr("Project"), checked=True)
+        self._scope_open = QRadioButton(tr("Open files"))
         for rb in (self._scope_project, self._scope_open):
             rb.toggled.connect(self._schedule)
             hl.addWidget(rb)
         hl.addStretch()
-        self.case_btn = self._toggle("Cc", "Büyük/küçük harf duyarlı (Alt+C)", "Alt+C")
-        self.word_btn = self._toggle("W", "Tam kelime (Alt+W)", "Alt+W")
-        self.regex_btn = self._toggle(".*", "Düzenli ifade / regex (Alt+X)", "Alt+X")
+        self.case_btn = self._toggle("Cc", tr("Match case (Alt+C)"), "Alt+C")
+        self.word_btn = self._toggle("W", tr("Whole words (Alt+W)"), "Alt+W")
+        self.regex_btn = self._toggle(".*", tr("Regular expression (Alt+X)"), "Alt+X")
         for b in (self.case_btn, self.word_btn, self.regex_btn):
             hl.addWidget(b)
         hl.addSpacing(8)
-        mask_label = QLabel("Dosya maskesi")
+        mask_label = QLabel(tr("File mask"))
         mask_label.setObjectName("hint")
         hl.addWidget(mask_label)
         self._mask = QComboBox()
         self._mask.setEditable(True)
         self._mask.addItems(["*", "*.py", "*.json", "*.txt, *.md"])
         self._mask.setMinimumWidth(110)
-        self._mask.setToolTip("Virgülle ayırın, ör. *.py, *.txt")
+        self._mask.setToolTip(tr("Separate with commas, e.g. *.py, *.txt"))
         self._mask.currentTextChanged.connect(self._schedule)
         hl.addWidget(self._mask)
         close = QToolButton()
         close.setIcon(icons.icon("close", "#9da0a8", 14))
-        close.setToolTip("Kapat (Esc)")
+        close.setToolTip(tr("Close (Esc)"))
         close.clicked.connect(self.close)
         hl.addWidget(close)
         root.addWidget(header)
 
-        # ---- arama / değiştirme alanları --------------------------------- #
+        # ---- find / replace fields -------------------------------------- #
         fields = QVBoxLayout()
         fields.setContentsMargins(12, 2, 12, 8)
         fields.setSpacing(6)
         self.find_edit = QLineEdit()
         self.find_edit.setObjectName("big")
-        self.find_edit.setPlaceholderText("Aranacak metin")
+        self.find_edit.setPlaceholderText(tr("Text to find"))
         self.find_edit.addAction(icons.icon("search", "#868a91"), QLineEdit.LeadingPosition)
         self.find_edit.setClearButtonEnabled(True)
         self.find_edit.textChanged.connect(self._schedule)
         fields.addWidget(self.find_edit)
         self.replace_edit = QLineEdit()
         self.replace_edit.setObjectName("big")
-        self.replace_edit.setPlaceholderText("Yerine konacak metin (regex: \\1 grupları)")
+        self.replace_edit.setPlaceholderText(tr("Replacement text (regex: \\1 groups)"))
         self.replace_edit.addAction(icons.icon("refresh", "#868a91"), QLineEdit.LeadingPosition)
         fields.addWidget(self.replace_edit)
         root.addLayout(fields)
 
-        # ---- sonuçlar + önizleme ----------------------------------------- #
+        # ---- results + preview ----------------------------------------- #
         self._results = QListWidget()
         self._results.setItemDelegate(_ResultDelegate(self._results))
         self._results.setUniformItemSizes(True)
@@ -236,18 +237,18 @@ class FindInFilesDialog(QDialog):
         split.setChildrenCollapsible(False)
         root.addWidget(split, 1)
 
-        # ---- alt çubuk ----------------------------------------------------- #
+        # ---- footer ------------------------------------------------------ #
         footer = QHBoxLayout()
         footer.setContentsMargins(12, 8, 4, 4)
         self._status = QLabel()
         self._status.setObjectName("hint")
         footer.addWidget(self._status, 1)
-        self._replace_btn = QPushButton("Değiştir")
-        self._replace_btn.setToolTip("Seçili sonucu değiştir")
+        self._replace_btn = QPushButton(tr("Replace"))
+        self._replace_btn.setToolTip(tr("Replace the selected result"))
         self._replace_btn.clicked.connect(self.replace_current)
-        self._replace_all_btn = QPushButton("Tümünü Değiştir")
+        self._replace_all_btn = QPushButton(tr("Replace All"))
         self._replace_all_btn.clicked.connect(self.replace_all)
-        self._open_btn = QPushButton("Editörde Aç")
+        self._open_btn = QPushButton(tr("Open in Editor"))
         self._open_btn.setDefault(True)
         self._open_btn.setToolTip("Enter")
         self._open_btn.clicked.connect(self.open_current)
@@ -286,10 +287,10 @@ class FindInFilesDialog(QDialog):
         shortcut(key, self, b.toggle, Qt.WindowShortcut)
         return b
 
-    # ---- açma ------------------------------------------------------------ #
+    # ---- opening --------------------------------------------------------- #
     def set_replace_mode(self, replace: bool) -> None:
         self._replace_mode = replace
-        self._title.setText("Dosyalarda Değiştir" if replace else "Dosyalarda Bul")
+        self._title.setText(tr("Replace in Files") if replace else tr("Find in Files"))
         self.replace_edit.setVisible(replace)
         self._replace_btn.setVisible(replace)
         self._replace_all_btn.setVisible(replace)
@@ -314,7 +315,7 @@ class FindInFilesDialog(QDialog):
         self.ctx.settings.setValue("find_in_files/geometry", self.saveGeometry())
         super().closeEvent(e)
 
-    # ---- arama ----------------------------------------------------------- #
+    # ---- search ---------------------------------------------------------- #
     def _schedule(self, *_):
         self._timer.start()
 
@@ -343,12 +344,12 @@ class FindInFilesDialog(QDialog):
         except re.error as e:
             self._pattern = None
             self._set_error(True)
-            self._status.setText(f"<span style='color:#db5c5c'>Hatalı regex: {e}</span>")
+            self._status.setText(f"<span style='color:#db5c5c'>{tr('Invalid regex: {error}', error=e)}</span>")
             self._preview(None)
             return
         project = self.ctx.project
         if self._pattern is None or project is None:
-            self._status.setText("Proje açık değil." if project is None else "")
+            self._status.setText(tr("No project is open.") if project is None else "")
             self._preview(None)
             return
         masks = [m for m in re.split(r"[,;]", self._mask.currentText())]
@@ -370,8 +371,9 @@ class FindInFilesDialog(QDialog):
             if keep == (m.path, m.line, m.column):
                 select_row = i
         files = len({m.path for m in results})
-        more = f" (ilk {self.MAX_RESULTS})" if len(results) >= self.MAX_RESULTS else ""
-        self._status.setText(f"{len(results)} eşleşme · {files} dosya{more}" if results else "Sonuç yok")
+        more = " " + tr("(first {n})", n=self.MAX_RESULTS) if len(results) >= self.MAX_RESULTS else ""
+        self._status.setText(f"{ntr('{n} match', '{n} matches', len(results))} · "
+                             f"{ntr('{n} file', '{n} files', files)}{more}" if results else tr("No results"))
         if results:
             self._results.setCurrentRow(select_row)
         else:
@@ -393,7 +395,7 @@ class FindInFilesDialog(QDialog):
         if n:
             self._results.setCurrentRow(min(max(self._results.currentRow() + step, 0), n - 1))
 
-    # ---- önizleme -------------------------------------------------------- #
+    # ---- preview --------------------------------------------------------- #
     def _preview(self, item) -> None:
         m: Optional[LineMatch] = item.data(ROLE_MATCH) if item else None
         editor = self._preview_editor
@@ -413,13 +415,13 @@ class FindInFilesDialog(QDialog):
             self._preview_editor = editor
         project = self.ctx.project
         rel = project.relative(m.path) if project and project.contains(m.path) else m.path
-        self._preview_title.setText(f"{rel.replace(os.sep, '/')}  ·  satır {m.line}")
+        self._preview_title.setText(f"{rel.replace(os.sep, '/')}  ·  " + tr("line {line}", line=m.line))
         editor.select_match_at(m.line, m.column, m.length)
-        # yeni oluşturulan editör henüz boyutlanmamış olabilir; yerleşimden sonra tekrar ortala
+        # a newly created editor may not be sized yet; center again after layout
         QTimer.singleShot(0, lambda e=editor, mm=m: e.select_match_at(mm.line, mm.column, mm.length)
                           if e is self._preview_editor else None)
 
-    # ---- eylemler -------------------------------------------------------- #
+    # ---- actions --------------------------------------------------------- #
     def open_current(self) -> None:
         m = self._current_match()
         if m is None or not self.ctx.documents:
@@ -460,14 +462,15 @@ class FindInFilesDialog(QDialog):
             m = self._results.item(i).data(ROLE_MATCH)
             by_file[m.path] = by_file.get(m.path, 0) + 1
         total = sum(by_file.values())
-        if QMessageBox.question(self, "Tümünü değiştir",
-                                f"{len(by_file)} dosyada {total} eşleşme “{self.replace_edit.text()}” ile "
-                                f"değiştirilecek. Devam edilsin mi?") != QMessageBox.Yes:
+        if QMessageBox.question(self, tr("Replace all"),
+                                tr("{total} matches in {files} files will be replaced with “{text}”. Continue?",
+                                   total=total, files=len(by_file), text=self.replace_edit.text())) != QMessageBox.Yes:
             return
         pattern, query, replacement = self._pattern, self._query, self.replace_edit.text()
         changed = 0
         for path in by_file:
             changed += apply_text_change(self.ctx, path, lambda text: search.replace_in_text(pattern, query, text, replacement))
-        self.ctx.bus.status_message.emit(f"{len(by_file)} dosyada {changed} eşleşme değiştirildi")
+        self.ctx.bus.status_message.emit(tr("{changed} matches replaced in {files} files", changed=changed,
+                                            files=len(by_file)))
         self.ctx.bus.images_changed.emit()
         self.run_search()

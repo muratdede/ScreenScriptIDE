@@ -1,7 +1,7 @@
-"""Vektör ikonlar (16x16 SVG). Dosya gerektirmez; QIcon olarak ya da QSS için dosyaya yazılarak kullanılır.
+"""Vector icons (16x16 SVG). No files needed; used as QIcon or written to a file for QSS.
 
-Yeni ikon eklemek: _ICONS sözlüğüne 16x16 viewBox içinde SVG gövdesi ekleyin. Gövdede renk yerine
-{c} kullanın; çizgiler varsayılan olarak {c} ile, dolgular fill="{c}" ile boyanır.
+Adding a new icon: add an SVG body inside a 16x16 viewBox to the _ICONS dict. Use {c} instead of a
+color in the body; strokes are painted with {c} by default, fills with fill="{c}".
 """
 
 from __future__ import annotations
@@ -131,7 +131,7 @@ def icon(name: str, color: str = DEFAULT_COLOR, size: int = 16, disabled: Option
 
 @lru_cache(maxsize=32)
 def badge(letter: str, color: str, size: int = 20) -> QIcon:
-    """IntelliJ'deki proje rozeti: renkli yuvarlak kare içinde baş harf."""
+    """Project badge like in IntelliJ: initial letter inside a colored rounded square."""
     ic = QIcon()
     for dpr in (1.0, 2.0):
         px = round(size * dpr)
@@ -158,7 +158,7 @@ _FILE_DIR = os.path.join(tempfile.gettempdir(), "screenscript-ide-icons")
 
 
 def icon_file(name: str, color: str = DEFAULT_COLOR) -> str:
-    """QSS'te url(...) ile kullanmak için ikonu diske yazar; '/' ayraçlı yol döndürür."""
+    """Writes the icon to disk for use with url(...) in QSS; returns a '/' separated path."""
     os.makedirs(_FILE_DIR, exist_ok=True)
     path = os.path.join(_FILE_DIR, f"{name}_{color.lstrip('#')}.svg")
     data = svg(name, color)

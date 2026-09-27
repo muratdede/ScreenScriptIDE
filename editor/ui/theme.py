@@ -1,5 +1,5 @@
-"""Renkler ve koyu tema (IntelliJ "New UI" Dark örnek alınmıştır).
-Başka tema için Theme'den türetip renkleri ya da stylesheet()'i ezin."""
+"""Colors and the dark theme (modeled on IntelliJ "New UI" Dark).
+For another theme derive from Theme and override the colors or stylesheet()."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from . import icons
 
 
 class Theme:
-    # yüzeyler
-    background = QColor("#1e1f22")      # editör
-    surface = QColor("#2b2d30")         # paneller, araç çubukları
-    border = QColor("#1e1f22")          # paneller arası çizgi
+    # surfaces
+    background = QColor("#1e1f22")      # editor
+    surface = QColor("#2b2d30")         # panels, toolbars
+    border = QColor("#1e1f22")          # line between panels
     hover = QColor("#393b40")
     pressed = QColor("#43454a")
     input_border = QColor("#4e5157")
@@ -26,8 +26,8 @@ class Theme:
     current_line = QColor("#26282e")
     debug_line = QColor("#2d3f63")
     breakpoint = QColor("#db5c5c")
-    error = QColor("#f75464")           # kod denetimi: hata
-    warning = QColor("#e0a84a")         # kod denetimi: uyarı
+    error = QColor("#f75464")           # code inspection: error
+    warning = QColor("#e0a84a")         # code inspection: warning
     debug_arrow = QColor("#f2c55c")
     selection = QColor("#214283")
     find_match = QColor("#32593d")
@@ -37,7 +37,7 @@ class Theme:
     stop_red = QColor("#db5c5c")
     icon = QColor("#ced0d6")
 
-    # sözdizimi
+    # syntax
     keyword = QColor("#cf8e6d")
     builtin = QColor("#8888c6")
     api = QColor("#56b6c2")
@@ -47,13 +47,13 @@ class Theme:
     definition = QColor("#56a8f5")
     decorator = QColor("#b3ae60")
     self_ = QColor("#94558d")
-    # anlamsal renklendirme (kullanıcının tanımladığı isimler)
-    class_ref = QColor("#4ec9b0")        # sınıf kullanımı
-    function_call = QColor("#57aaf7")    # fonksiyon / metot çağrısı
-    parameter = QColor("#d6a3c9")        # parametre ve isimli argüman
-    module = QColor("#b0c4de")           # importlanan modül
+    # semantic highlighting (names defined by the user)
+    class_ref = QColor("#4ec9b0")        # class usage
+    function_call = QColor("#57aaf7")    # function / method call
+    parameter = QColor("#d6a3c9")        # parameter and keyword argument
+    module = QColor("#b0c4de")           # imported module
 
-    # konsol
+    # console
     console_err = QColor("#f07178")
     console_warn = QColor("#e5c07b")
     console_sys = QColor("#61afef")

@@ -1,4 +1,4 @@
-"""Ayar pencereleri: uygulama ayarları (tüm projeler için ortak) ve proje ayarları."""
+"""Settings windows: application settings (shared by all projects) and project settings."""
 
 from __future__ import annotations
 
@@ -10,78 +10,83 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel,
                                QLineEdit, QPlainTextEdit, QPushButton, QSizePolicy, QSpinBox, QWidget)
 
+from .. import i18n
 from ..core import app_settings
 from ..core.app_settings import AppConfig
 from ..core.project import Project, ProjectConfig
+from ..i18n import N_, tr
 from .inspections_panel import InspectionsPanel
 from .settings_dialog import GroupedSettingsDialog, hint
 
 
 class ProjectSettingsDialog(GroupedSettingsDialog):
-    LOG_LEVELS = [("DEBUG", "DEBUG — her şey (arama skorları, adb komutları)"), ("INFO", "INFO — varsayılan"),
-                  ("WARNING", "WARNING — sadece uyarı ve hatalar"), ("ERROR", "ERROR — sadece hatalar")]
-    OCR_BACKENDS = [("auto", "Otomatik"), ("rapid", "RapidOCR (isabetli)"), ("windows", "Windows OCR (hızlı)")]
+    LOG_LEVELS = [("DEBUG", N_("DEBUG — everything (search scores, adb commands)")), ("INFO", N_("INFO — default")),
+                  ("WARNING", N_("WARNING — only warnings and errors")), ("ERROR", N_("ERROR — only errors"))]
+    OCR_BACKENDS = [("auto", N_("Automatic")), ("rapid", N_("RapidOCR (accurate)")),
+                    ("windows", N_("Windows OCR (fast)"))]
 
     def __init__(self, project: Project, parent=None):
-        super().__init__(f"Proje Ayarları — {project.name}", parent)
+        super().__init__(tr("Project Settings — {name}", name=project.name), parent)
         self._project = project
         c = project.config
 
-        # eşleştirme
+        # matching
         self.similarity = QDoubleSpinBox(minimum=0.1, maximum=1.0, singleStep=0.05, decimals=2, value=c.similarity)
         self.timeout = QDoubleSpinBox(minimum=0.0, maximum=600, singleStep=0.5, decimals=1, value=c.timeout)
         self.scan_rate = QDoubleSpinBox(minimum=0.2, maximum=30, singleStep=0.5, decimals=1, value=c.scan_rate)
         self.scales = QLineEdit(", ".join(f"{v:g}" for v in c.scales))
-        self.scales.setToolTip("Çoklu ölçekli arama her zaman açıktır. Denenecek ölçekler, virgülle.\n"
-                               "Daha fazla ölçek = daha toleranslı ama daha yavaş arama. 1.0 her zaman eklenir.")
-        self.grayscale = QCheckBox("Gri tonlamada eşleştir (daha hızlı)", checked=c.grayscale)
+        self.scales.setToolTip(tr("Multi-scale search is always on. Scales to try, comma separated.\n"
+                                  "More scales = more tolerant but slower search. 1.0 is always added."))
+        self.grayscale = QCheckBox(tr("Match in grayscale (faster)"), checked=c.grayscale)
         self.ocr = QComboBox()
         for value, label in self.OCR_BACKENDS:
-            self.ocr.addItem(label, value)
+            self.ocr.addItem(tr(label), value)
         self.ocr.setCurrentIndex(max(0, self.ocr.findData(c.ocr)))
-        self.ocr.setToolTip("read_text / find_text için motor. Otomatik: kurulu olanlardan RapidOCR, yoksa Windows.")
+        self.ocr.setToolTip(tr("Engine for read_text / find_text. Automatic: RapidOCR if installed, otherwise Windows."))
 
-        # çalıştırma
+        # running
         self.main_script = QLineEdit(c.main_script)
-        main_row = self._with_button(self.main_script, "Seç…", self._browse_main)
-        self.humanize = QCheckBox("Tıklamalara küçük sapma/gecikme ekle", checked=c.humanize)
+        main_row = self._with_button(self.main_script, tr("Choose…"), self._browse_main)
+        self.humanize = QCheckBox(tr("Add a small jitter/delay to clicks"), checked=c.humanize)
         self.tap_ms = QSpinBox(minimum=0, maximum=1000, singleStep=10, value=int(c.tap_ms), suffix=" ms")
-        self.tap_ms.setToolTip("0: anlık dokunuş (input tap). >0: parmak bu kadar basılı kalıp kalkar;\n"
-                               "oyun kısa dokunuşları kaçırıyorsa 60-120 ms deneyin.")
-        self.save_on_fail = QCheckBox("Bulunamayınca ekranı debug/ klasörüne kaydet", checked=c.save_on_fail)
+        self.tap_ms.setToolTip(tr("0: instant tap (input tap). >0: the finger stays down this long, then lifts;\n"
+                                  "try 60-120 ms if the game misses short taps."))
+        self.save_on_fail = QCheckBox(tr("Save the screen to the debug/ folder when not found"), checked=c.save_on_fail)
         self.log_level = QComboBox()
         for value, label in self.LOG_LEVELS:
-            self.log_level.addItem(label, value)
+            self.log_level.addItem(tr(label), value)
         self.log_level.setCurrentIndex(max(0, self.log_level.findData(str(c.log_level).upper())))
         self.image_dirs = QLineEdit(", ".join(c.image_dirs))
         self.args = QPlainTextEdit("\n".join(f"{k}={v}" for k, v in c.script_args.items()))
-        self.args.setPlaceholderText("anahtar=değer (her satıra bir tane) — script'te ARGS['anahtar']")
+        self.args.setPlaceholderText(tr("key=value (one per line) — ARGS['key'] in the script"))
 
         self.args.setMinimumHeight(120)
 
-        self.add_page(("Genel",), [
-            ("Script", [("Ana script", main_row)]),
-            ("Görseller", [("Görsel klasörleri", self.image_dirs),
-                           ("", hint("Proje köküne göre, virgülle ayrılmış klasörler."))]),
-            ("", [("", hint("Cihaz bağlantısı ve Telegram bildirim ayarları uygulama ayarlarındadır "
-                            "(Ayarlar, Ctrl+Alt+S)."))])])
-        self.add_page(("Eşleştirme", "Görsel Arama"), [
-            ("Eşik ve süre", [("Varsayılan eşik", self.similarity), ("Bekleme süresi (sn)", self.timeout),
-                              ("Tarama hızı (/sn)", self.scan_rate)]),
-            ("Ölçek ve renk", [("Ölçekler (her zaman açık)", self.scales), ("", self.grayscale)])])
-        self.add_page(("Eşleştirme", "Metin Okuma (OCR)"), [
-            ("OCR", [("Motor", self.ocr),
-                     ("", hint("read_text / find_text için kullanılır. Otomatik: kurulu olanlardan "
-                               "RapidOCR, yoksa Windows OCR."))])])
-        self.add_page(("Çalıştırma", "Girdi"), [
-            ("Dokunuş", [("", self.humanize), ("Dokunuş süresi", self.tap_ms)])])
-        self.add_page(("Çalıştırma", "Script Argümanları"), [
-            ("ARGS", [("Argümanlar", self.args)])])
-        self.add_page(("Çalıştırma", "Hata Ayıklama"), [
-            ("Başarısız arama", [("", self.save_on_fail)]),
-            ("Konsol", [("Log seviyesi", self.log_level),
-                        ("", hint("Script çalışırken konsola yazılan log mesajlarının en düşük seviyesi. "
-                                  "log() INFO seviyesindedir; WARNING seçilirse görünmez."))])])
+        self.add_page((tr("General"),), [
+            (tr("Script"), [(tr("Main script"), main_row)]),
+            (tr("Images"), [(tr("Image folders"), self.image_dirs),
+                            ("", hint(tr("Folders relative to the project root, comma separated.")))]),
+            ("", [("", hint(tr("Device connection and Telegram notification settings are in the application "
+                               "settings (Settings, Ctrl+Alt+S).")))])])
+        self.add_page((tr("Matching"), tr("Image Search")), [
+            (tr("Threshold and time"), [(tr("Default threshold"), self.similarity),
+                                        (tr("Wait time (s)"), self.timeout),
+                                        (tr("Scan rate (/s)"), self.scan_rate)]),
+            (tr("Scale and color"), [(tr("Scales (always on)"), self.scales), ("", self.grayscale)])])
+        self.add_page((tr("Matching"), tr("Text Recognition (OCR)")), [
+            ("OCR", [(tr("Engine"), self.ocr),
+                     ("", hint(tr("Used for read_text / find_text. Automatic: RapidOCR if installed, "
+                                  "otherwise Windows OCR.")))])])
+        self.add_page((tr("Running"), tr("Input")), [
+            (tr("Tap"), [("", self.humanize), (tr("Tap duration"), self.tap_ms)])])
+        self.add_page((tr("Running"), tr("Script Arguments")), [
+            ("ARGS", [(tr("Arguments"), self.args)])])
+        self.add_page((tr("Running"), tr("Debugging")), [
+            (tr("Failed search"), [("", self.save_on_fail)]),
+            (tr("Console"), [(tr("Log level"), self.log_level),
+                             ("", hint(tr("The lowest level of log messages written to the console while the "
+                                          "script runs. log() is at INFO level; it is hidden if WARNING is "
+                                          "selected.")))])])
         self.finish()
 
     @staticmethod
@@ -97,7 +102,7 @@ class ProjectSettingsDialog(GroupedSettingsDialog):
         return w
 
     def _browse_main(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Ana script", self._project.root, "Python (*.py)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Main script"), self._project.root, "Python (*.py)")
         if path:
             self.main_script.setText(self._project.relative(path))
 
@@ -125,50 +130,57 @@ class ProjectSettingsDialog(GroupedSettingsDialog):
 
 
 class AppSettingsDialog(GroupedSettingsDialog):
-    """Uygulama ayarları: %LOCALAPPDATA%\\ScreenScript\\settings.json. Tüm projelerde geçerlidir."""
+    """Application settings: %LOCALAPPDATA%\\ScreenScript\\settings.json. Valid for all projects."""
 
     _test_done = Signal(bool, str)
 
     def __init__(self, config: AppConfig, parent=None):
-        super().__init__("Ayarlar", parent)
+        super().__init__(tr("Settings"), parent)
         self._config = config
         c = config
+
+        self.language = QComboBox()
+        self.language.addItem(tr("Automatic (system language)"), "")
+        for code, native_name in i18n.LANGUAGES:
+            self.language.addItem(native_name, code)   # native names are never translated
+        self.language.setCurrentIndex(max(0, self.language.findData(c.language)))
 
         self.host = QLineEdit(c.host)
         self.port = QSpinBox(minimum=1, maximum=65535, value=int(c.port))
         self.adb = QLineEdit(c.adb_path)
-        self.adb.setPlaceholderText("Boş = otomatik bul (PATH / BlueStacks HD-Adb.exe)")
-        adb_row = ProjectSettingsDialog._with_button(self.adb, "Gözat…", self._browse_adb)
+        self.adb.setPlaceholderText(tr("Empty = find automatically (PATH / BlueStacks HD-Adb.exe)"))
+        adb_row = ProjectSettingsDialog._with_button(self.adb, tr("Browse…"), self._browse_adb)
         self.fmt = QComboBox()
-        self.fmt.addItem("stream — H.264 akışı (hızlı, ~35 FPS)", "stream")
-        self.fmt.addItem("raw — screencap (yavaş, ~3 FPS)", "raw")
-        self.fmt.addItem("png — screencap PNG", "png")
+        self.fmt.addItem(tr("stream — H.264 stream (fast, ~35 FPS)"), "stream")
+        self.fmt.addItem(tr("raw — screencap (slow, ~3 FPS)"), "raw")
+        self.fmt.addItem(tr("png — screencap PNG"), "png")
         self.fmt.setCurrentIndex(max(0, self.fmt.findData(c.screencap_format)))
-        self.background = QCheckBox("Script çalışırken arka planda sürekli yakala", checked=c.background)
+        self.background = QCheckBox(tr("Capture continuously in the background while a script runs"),
+                                    checked=c.background)
 
         self.tg_token = QLineEdit(c.telegram_token)
         self.tg_token.setEchoMode(QLineEdit.PasswordEchoOnEdit)
-        self.tg_token.setPlaceholderText("BotFather token'ı (boş = TELEGRAM_BOT_TOKEN ortam değişkeni)")
+        self.tg_token.setPlaceholderText(tr("BotFather token (empty = TELEGRAM_BOT_TOKEN environment variable)"))
         self.tg_user = QLineEdit(c.telegram_username)
-        self.tg_user.setPlaceholderText("@kullanici — kişi bota bir kez Start demiş olmalı")
-        self.tg_commands = QCheckBox("Editör açıkken bot komutlarını yanıtla (/capture: ekran görüntüsü gönder)",
+        self.tg_user.setPlaceholderText(tr("@user — the person must have pressed Start in the bot once"))
+        self.tg_commands = QCheckBox(tr("Answer bot commands while the editor is open (/capture: send a screenshot)"),
                                      checked=c.telegram_commands)
-        self._test_btn = QPushButton("Test mesajı gönder")
+        self._test_btn = QPushButton(tr("Send test message"))
         self._test_btn.clicked.connect(self._send_test)
         self._test_result = QLabel()
         self._test_result.setWordWrap(True)
         self._test_done.connect(self._on_test_done)
         test_row = QWidget()
-        tr = QHBoxLayout(test_row)
-        tr.setContentsMargins(0, 0, 0, 0)
-        tr.addWidget(self._test_btn)
-        tr.addWidget(self._test_result, 1)
+        test_layout = QHBoxLayout(test_row)
+        test_layout.setContentsMargins(0, 0, 0, 0)
+        test_layout.addWidget(self._test_btn)
+        test_layout.addWidget(self._test_result, 1)
 
         folder = app_settings.app_data_dir()
         path_label = QLabel(folder)
         path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         path_label.setObjectName("hint")
-        open_btn = QPushButton("Klasörü aç")
+        open_btn = QPushButton(tr("Open folder"))
         open_btn.clicked.connect(lambda: app_settings.open_in_file_manager(folder))
         folder_row = QWidget()
         folder_row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -177,34 +189,39 @@ class AppSettingsDialog(GroupedSettingsDialog):
         fr.addWidget(path_label, 1)
         fr.addWidget(open_btn)
 
-        self.add_page(("Cihaz", "Bağlantı"), [
-            ("ADB", [("Host", self.host), ("Port", self.port), ("adb yolu", adb_row)])])
-        self.add_page(("Cihaz", "Ekran Yakalama"), [
-            ("Yakalama", [("Format", self.fmt), ("", self.background)])])
-        self.add_page(("Bildirimler", "Telegram"), [
-            ("Bot", [("Bot token", self.tg_token), ("Kullanıcı adı", self.tg_user), ("", self.tg_commands)]),
-            ("Deneme", [("", test_row)]),
-            ("", [("", hint("Script'lerde push_notification() bu ayarlarla gönderilir."))])])
+        self.add_page((tr("Appearance"), tr("Language")), [
+            (tr("Interface"), [(tr("Language"), self.language),
+                               ("", hint(tr("Applies to menus, messages, logs and Telegram messages. "
+                                            "Takes effect after restarting the IDE.")))])])
+        self.add_page((tr("Device"), tr("Connection")), [
+            ("ADB", [(tr("Host"), self.host), (tr("Port"), self.port), (tr("adb path"), adb_row)])])
+        self.add_page((tr("Device"), tr("Screen Capture")), [
+            (tr("Capturing"), [(tr("Format"), self.fmt), ("", self.background)])])
+        self.add_page((tr("Notifications"), "Telegram"), [
+            (tr("Bot"), [(tr("Bot token"), self.tg_token), (tr("Username"), self.tg_user), ("", self.tg_commands)]),
+            (tr("Test"), [("", test_row)]),
+            ("", [("", hint(tr("push_notification() in scripts is sent with these settings.")))])])
         self.inspections = InspectionsPanel(c.disabled_warnings)
-        self.add_page(("Editör", "Denetimler"), [
-            ("Uyarılar", [("", self.inspections)])])
-        self.add_page(("Sistem", "Ayar Klasörü"), [
-            ("Konum", [("", folder_row),
-                       ("", hint("IDE durumu (ide.ini), uygulama ayarları (settings.json), Telegram önbelleği "
-                                 "ve oturum dosyaları (*.session) burada tutulur; proje klasörlerine "
-                                 "yazılmaz."))])])
+        self.add_page((tr("Editor"), tr("Inspections")), [
+            (tr("Warnings"), [("", self.inspections)])])
+        self.add_page((tr("System"), tr("Settings Folder")), [
+            (tr("Location"), [("", folder_row),
+                              ("", hint(tr("IDE state (ide.ini), application settings (settings.json), the "
+                                           "Telegram cache and session files (*.session) are kept here; nothing "
+                                           "is written to project folders.")))])])
         self.finish()
 
     def _browse_adb(self):
-        path, _ = QFileDialog.getOpenFileName(self, "adb seç", r"C:\Program Files\BlueStacks_nxt"
-                                              if os.name == "nt" else "", "adb (adb* HD-Adb*);;Tümü (*)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("Select adb"), r"C:\Program Files\BlueStacks_nxt"
+                                              if os.name == "nt" else "", tr("adb (adb* HD-Adb*);;All (*)"))
         if path:
             self.adb.setText(path)
 
     def result_config(self) -> AppConfig:
-        """Penceredeki değerlerle yeni AppConfig (pencerede olmayan alanlar korunur)."""
+        """A new AppConfig with the values in the window (fields not in the window are kept)."""
         return dataclasses.replace(
             self._config,
+            language=self.language.currentData(),
             host=self.host.text().strip() or "127.0.0.1",
             port=self.port.value(),
             adb_path=self.adb.text().strip(),
@@ -219,17 +236,17 @@ class AppSettingsDialog(GroupedSettingsDialog):
         cfg = self.result_config()
         token, user = cfg.effective_telegram_token(), cfg.telegram_username
         if not token or not user:
-            self._on_test_done(False, "Token ve kullanıcı adı gerekli.")
+            self._on_test_done(False, tr("Token and username are required."))
             return
         self._test_btn.setEnabled(False)
-        self._test_result.setText("Gönderiliyor…")
+        self._test_result.setText(tr("Sending…"))
 
         def work():
             from ..plugins.screenscript import TelegramNotifier
             try:
                 TelegramNotifier(token, user, cache_path=app_settings.telegram_cache_path()) \
-                    .send_text("ScreenScript IDE: test bildirimi ✔")
-                self._test_done.emit(True, "Gönderildi.")
+                    .send_text(tr("ScreenScript IDE: test notification ✔"))
+                self._test_done.emit(True, tr("Sent."))
             except Exception as e:  # noqa: BLE001
                 self._test_done.emit(False, str(e))
         threading.Thread(target=work, daemon=True).start()

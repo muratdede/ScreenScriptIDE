@@ -1,4 +1,4 @@
-"""Girdi sürücüleri: tıklama, kaydırma, yazı. Yeni sürücü = InputDriver'dan türetilmiş sınıf."""
+"""Input drivers: tap, swipe, text. New driver = class derived from InputDriver."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from .geometry import Location
 
 
 class Key(IntEnum):
-    """Android keycode'ları (sık kullanılanlar)."""
+    """Android keycodes (frequently used ones)."""
     HOME = 3
     BACK = 4
     ENTER = 66
@@ -24,7 +24,7 @@ class Key(IntEnum):
 
 
 class InputDriver(ABC):
-    """Koordinatlar cihaz (ekran görüntüsü) pikselidir."""
+    """Coordinates are device (screenshot) pixels."""
 
     @abstractmethod
     def tap(self, loc: Location) -> None: ...
@@ -33,7 +33,7 @@ class InputDriver(ABC):
     def swipe(self, start: Location, end: Location, duration_ms: int = 300) -> None: ...
 
     def long_press(self, loc: Location, duration_ms: int = 800) -> None:
-        # Varsayılan: yerinde kaydırma = uzun basma
+        # default: an in-place swipe = long press
         self.swipe(loc, loc, duration_ms)
 
     @abstractmethod
@@ -44,11 +44,11 @@ class InputDriver(ABC):
 
 
 class AdbInputDriver(InputDriver):
-    """`adb shell input ...` ile dokunma gönderir.
+    """Sends touches with `adb shell input ...`.
 
-    press_ms > 0 ise dokunma, parmağın o kadar süre basılı kalıp kalktığı bir basış olarak
-    gönderilir (`input swipe x y x y ms`). `input tap` basma ve kaldırmayı aynı anda yollar;
-    bazı oyunlar (özellikle yük altında) bu kadar kısa dokunuşları kaçırabiliyor."""
+    If press_ms > 0, a tap is sent as a press where the finger stays down that long and then lifts
+    (`input swipe x y x y ms`). `input tap` sends down and up at the same time; some games
+    (especially under load) can miss such short touches."""
 
     def __init__(self, device: AdbDevice, press_ms: int = 0):
         self._device = device
@@ -64,7 +64,7 @@ class AdbInputDriver(InputDriver):
         self._device.shell(f"input swipe {start.x} {start.y} {end.x} {end.y} {int(duration_ms)}")
 
     def type_text(self, text):
-        # input text boşluğu %s olarak ister; kabuk karakterlerini kaçır
+        # input text wants spaces as %s; escape shell characters
         escaped = "".join("\\" + c if c in "\"'`\\$&|;<>()*?#~" else c for c in text).replace(" ", "%s")
         self._device.shell(f"input text {escaped}")
 
@@ -73,7 +73,7 @@ class AdbInputDriver(InputDriver):
 
 
 class HumanizedInputDriver(InputDriver):
-    """Başka bir sürücüyü sarar (Decorator): koordinata küçük sapma ve rastgele gecikme ekler."""
+    """Wraps another driver (Decorator): adds a small coordinate jitter and a random delay."""
 
     def __init__(self, inner: InputDriver, jitter_px: int = 3, delay_range=(0.05, 0.25)):
         self._inner = inner

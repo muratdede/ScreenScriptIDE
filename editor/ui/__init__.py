@@ -1,1 +1,1 @@
-"""Qt arayüzü."""
+"""Qt user interface."""

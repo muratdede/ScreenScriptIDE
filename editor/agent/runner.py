@@ -1,5 +1,5 @@
-"""Script süreci. Editör bu modülü ayrı bir Python süreci olarak başlatır (ScriptSession);
-kullanıcının doğrudan çalıştırdığı bir giriş noktası değildir."""
+"""Script process. The editor starts this module as a separate Python process (ScriptSession);
+it is not an entry point the user runs directly."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ import os
 import sys
 
 from .. import __file__ as _editor_init
+from .. import i18n
+from ..core.app_settings import AppConfig
 from ..core.project import Project, ProjectConfig
 from ..core.protocol import Command, Event
 from ..plugins.screenscript import ScriptRunner
@@ -20,7 +22,7 @@ def parse_args():
     p = argparse.ArgumentParser(prog="editor.agent.runner")
     p.add_argument("--project", required=True)
     p.add_argument("--script", required=True)
-    p.add_argument("--config", help="ProjectConfig JSON dosyası (boşsa projedeki okunur)")
+    p.add_argument("--config", help="ProjectConfig JSON file (the project's own is read when empty)")
     p.add_argument("--debug-port", type=int)
     return p.parse_args()
 
@@ -39,8 +41,10 @@ def load_project(args) -> Project:
 
 def main() -> int:
     args = parse_args()
+    # same language as the editor (it exports SCREENSCRIPT_LANG); settings.json when run standalone
+    i18n.set_language(os.environ.get(i18n.ENV_VAR) or AppConfig.load().language)
     project = load_project(args)
-    level = getattr(logging, str(project.config.log_level).upper(), logging.INFO)   # Proje Ayarları > Hata Ayıklama
+    level = getattr(logging, str(project.config.log_level).upper(), logging.INFO)   # Project Settings > Debugging
     logging.basicConfig(level=level, stream=sys.stdout,
                         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
     os.chdir(project.root)
@@ -49,7 +53,7 @@ def main() -> int:
     try:
         context = ContextFactory(project).build()
     except Exception as e:  # noqa: BLE001
-        logging.getLogger("script").error("Başlatılamadı: %s", e)
+        logging.getLogger("script").error(i18n.tr("Starting failed: %s"), e)
         return 2
 
     runner = ScriptRunner(context)
@@ -66,7 +70,7 @@ def main() -> int:
     while start.get("type") != Command.START:
         start = channel.commands.get()
 
-    library_roots = [os.path.dirname(_editor_init)]   # editör + eklentiler (editor/plugins)
+    library_roots = [os.path.dirname(_editor_init)]   # editor + plugins (editor/plugins)
     debugger = ScriptDebugger(
         channel,
         user_roots=[project.root, os.path.dirname(script)],

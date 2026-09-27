@@ -1,30 +1,30 @@
 """
-Örnek proje: bölge (Region) ile sınırlı arama.
+Example project: search limited to a region (Region).
 
-1. Ekran view'ında "Yakala" ile cihaz ekranını alın.
-2. Aranacak butonu sürükleyerek seçin -> "Görsel kaydet" (ör. button.png).
-3. Butonun görünebileceği alanı seçin -> "Region ekle" ile koda Region(...) ekleyin.
-4. F5 ile debug edin, F9 ile breakpoint koyun.
+1. Capture the device screen with "Capture" in the Screen view.
+2. Drag to select the button to search -> "Save image" (e.g. button.png).
+3. Select the area where the button can appear -> insert Region(...) into code with "Region".
+4. Debug with F5, set breakpoints with F9.
 """
 
 IMAGE = ARGS.get("image", "button.png")
 THRESHOLD = float(ARGS.get("threshold", 0.85))
 
-# Tüm ekran yerine sadece sağ alt çeyrekte ara (daha hızlı ve yanlış eşleşme riski daha düşük)
-alan = Region(SCREEN.w // 2, SCREEN.h // 2, SCREEN.w // 2, SCREEN.h // 2)
-log(f"Arama alanı: {alan}")
+# search only in the bottom-right quarter instead of the whole screen (faster, fewer false matches)
+area = Region(SCREEN.w // 2, SCREEN.h // 2, SCREEN.w // 2, SCREEN.h // 2)
+log(f"Search area: {area}")
 
-hedef = Pattern(IMAGE).similar(THRESHOLD)
-m = alan.exists(hedef, timeout=5)
+target = Pattern(IMAGE).similar(THRESHOLD)
+m = area.exists(target, timeout=5)
 
 if m:
-    log(f"Bulundu: {m}")
+    log(f"Found: {m}")
     highlight(m)
     click(m)
 
-    # Eşleşmenin hemen altındaki 100 piksellik şeritte başka bir şey ara:
-    # alt = m.below(100)
-    # if alt.exists("ok.png", timeout=2):
-    #     click(alt.find("ok.png"))
+    # search something else in the 100 pixel strip right below the match:
+    # below = m.below(100)
+    # if below.exists("ok.png", timeout=2):
+    #     click(below.find("ok.png"))
 else:
-    log(f"Bulunamadı. Bu alandaki en iyi skor: {alan.best_score(hedef):.3f}")
+    log(f"Not found. Best score in this area: {area.best_score(target):.3f}")

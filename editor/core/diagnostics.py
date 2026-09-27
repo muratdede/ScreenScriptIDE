@@ -1,14 +1,14 @@
-"""Kod denetimi (IDE'lerdeki gibi hata / uyarı listesi).
+"""Code inspection (an error / warning list like in IDEs).
 
-İki katman:
-  - analyze_source() / check_source(): Qt bağımsız denetim. Sözdizimi hataları ve derleyici uyarıları
-    (compile), pyflakes uyarıları (tanımsız isim, kullanılmayan import, …), ek IDE denetimleri
-    (inspections: argüman sayısı, bulunamayan modül, erişilemeyen kod, …) ve projede bulunmayan
-    görsel adları. analyze_source ayrıca anlamsal renklendirme bilgisini (semantic) döndürür.
-  - DiagnosticsStore: dosya -> sorun listesi. Açık editörler kendi (kaydedilmemiş) metinlerinin
-    sonucunu yayınlar; açık olmayan proje dosyaları diskten taranır ve değiştikçe yeniden denetlenir.
+Two layers:
+  - analyze_source() / check_source(): Qt-independent inspection. Syntax errors and compiler warnings
+    (compile), pyflakes warnings (undefined name, unused import, …), extra IDE inspections
+    (inspections: argument count, unresolved module, unreachable code, …) and image names missing
+    from the project. analyze_source also returns the semantic highlighting info (semantic).
+  - DiagnosticsStore: file -> list of problems. Open editors publish the result for their own (unsaved)
+    text; project files that are not open are scanned from disk and re-inspected when they change.
 
-Bir satırın sonuna `# noqa` yazmak o satırdaki uyarıları gizler.
+Writing `# noqa` at the end of a line hides the warnings on that line.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from typing import Callable, Collection, Dict, Iterable, List, Mapping, Optional
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from ..i18n import N_, tr
 from . import inspections, search
 from .semantic import Tokens, semantic_tokens
 
@@ -33,7 +34,7 @@ IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp")
 _NOQA = re.compile(r"#\s*noqa\b", re.IGNORECASE)
 _IDENT = re.compile(r"[^\W\d]\w*")
 
-# pyflakes mesajı -> (önem, Türkçe şablon). Şablon mesajın message_args'ı ile doldurulur.
+# pyflakes message -> severity and message template. The template is filled with the message_args.
 _ERRORS = {"UndefinedName", "UndefinedLocal", "UndefinedExport", "ReturnOutsideFunction", "YieldOutsideFunction",
            "BreakOutsideLoop", "ContinueOutsideLoop", "DuplicateArgument", "TwoStarredExpressions",
            "TooManyExpressionsInStarredAssignment", "DefaultExceptNotLast", "LateFutureImport",
@@ -44,154 +45,159 @@ _ERRORS = {"UndefinedName", "UndefinedLocal", "UndefinedExport", "ReturnOutsideF
            "PercentFormatMixedPositionalAndNamed", "PercentFormatStarRequiresSequence",
            "PercentFormatUnsupportedFormatCharacter", "StringDotFormatInvalidFormat",
            "StringDotFormatMixingAutomatic"}
-_TURKISH = {
-    "UndefinedName": "Tanımsız isim '{0}'",
-    "UndefinedLocal": "'{0}' yerel değişkeni atanmadan önce kullanılıyor",
-    "UndefinedExport": "__all__ içinde tanımsız isim '{0}'",
-    "UnusedImport": "'{0}' içe aktarıldı ama kullanılmıyor",
-    "UnusedVariable": "'{0}' yerel değişkenine atandı ama hiç kullanılmıyor",
-    "UnusedAnnotation": "'{0}' yerel değişkeni tiplendi ama hiç kullanılmıyor",
-    "RedefinedWhileUnused": "Kullanılmayan '{0}' ({1}. satır) yeniden tanımlanıyor",
-    "ImportShadowedByLoopVar": "'{0}' importu ({1}. satır) döngü değişkeniyle gölgeleniyor",
-    "ImportStarUsed": "'from {0} import *' kullanıldı; tanımsız isimler denetlenemiyor",
-    "ImportStarUsage": "'{0}' tanımsız olabilir ya da şuradan geliyor: {1}",
-    "ReturnOutsideFunction": "Fonksiyon dışında 'return'",
-    "YieldOutsideFunction": "Fonksiyon dışında 'yield'",
-    "BreakOutsideLoop": "Döngü dışında 'break'",
-    "ContinueOutsideLoop": "Döngü dışında 'continue'",
-    "DuplicateArgument": "Fonksiyon tanımında tekrar eden argüman '{0}'",
-    "FStringMissingPlaceholders": "f-string içinde {{…}} yer tutucu yok",
-    "IsLiteral": "Sabitlerle karşılaştırmada 'is' yerine ==/!= kullanın",
-    "IfTuple": "'if (…,)' her zaman doğru; fazladan virgül olabilir",
-    "AssertTuple": "assert her zaman doğru; parantezleri kaldırın",
-    "RaiseNotImplemented": "'raise NotImplemented' yerine 'raise NotImplementedError' olmalı",
-    "MultiValueRepeatedKeyLiteral": "Sözlük anahtarı {0} farklı değerlerle tekrar ediyor",
-    "DefaultExceptNotLast": "'except:' en sonda olmalı",
-    "DoctestSyntaxError": "Doctest içinde sözdizimi hatası",
-    "EagerUseOfLazyImport": "Tembel importlanan '{0}' ({1}. satır) erkenden kullanılıyor",
-    "ForwardAnnotationSyntaxError": "İleri tip ipucunda sözdizimi hatası: {0}",
-    "FutureFeatureNotDefined": "Tanımsız __future__ özelliği: {0}",
-    "ImportStarNotPermitted": "'from {0} import *' yalnızca modül düzeyinde kullanılabilir",
-    "InvalidPrintSyntax": "print fonksiyonunda >> kullanılamaz",
-    "LateFutureImport": "from __future__ importları dosyanın en başında olmalı",
-    "LazyImportNotAtModuleScope": "Tembel import yalnızca modül düzeyinde olabilir",
-    "LazyImportStarNotPermitted": "'lazy from {0} import *' kullanılamaz",
-    "MultiValueRepeatedKeyVariable": "Sözlük anahtarı değişkeni {0} farklı değerlerle tekrar ediyor",
-    "PercentFormatExpectedMapping": "'…' % … sözlük bekliyor ama dizi verildi",
-    "PercentFormatExpectedSequence": "'…' % … dizi bekliyor ama sözlük verildi",
-    "PercentFormatExtraNamedArguments": "'…' % … kullanılmayan isimli argüman(lar): {0}",
-    "PercentFormatInvalidFormat": "'…' % … geçersiz biçim dizesi: {0}",
-    "PercentFormatMissingArgument": "'…' % … yer tutucu(lar) için argüman eksik: {0}",
-    "PercentFormatMixedPositionalAndNamed": "'…' % … konumsal ve isimli yer tutucular karışık",
-    "PercentFormatPositionalCountMismatch": "'…' % … {0} yer tutucu var ama {1} değer verildi",
-    "PercentFormatStarRequiresSequence": "'…' % … '*' belirteci dizi gerektirir",
-    "PercentFormatUnsupportedFormatCharacter": "'…' % … desteklenmeyen biçim karakteri {0}",
-    "StringDotFormatExtraNamedArguments": "'…'.format(…) kullanılmayan isimli argüman(lar): {0}",
-    "StringDotFormatExtraPositionalArguments": "'…'.format(…) kullanılmayan konumsal argüman(lar): {0}",
-    "StringDotFormatInvalidFormat": "'…'.format(…) geçersiz biçim dizesi: {0}",
-    "StringDotFormatMissingArgument": "'…'.format(…) yer tutucu(lar) için argüman eksik: {0}",
-    "StringDotFormatMixingAutomatic": "'…'.format(…) otomatik ve elle numaralandırmayı karıştırıyor",
-    "TStringMissingPlaceholders": "t-string içinde {{…}} yer tutucu yok",
-    "TooManyExpressionsInStarredAssignment": "Yıldızlı atamada çok fazla ifade",
-    "TwoStarredExpressions": "Atamada iki yıldızlı ifade",
-    "UnusedIndirectAssignment": "'{0} {1}' gereksiz: isim bu kapsamda hiç atanmıyor",
+_MESSAGES = {
+    "UndefinedName": N_("Undefined name '{0}'"),
+    "UndefinedLocal": N_("Local variable '{0}' is used before assignment"),
+    "UndefinedExport": N_("Undefined name '{0}' in __all__"),
+    "UnusedImport": N_("'{0}' imported but unused"),
+    "UnusedVariable": N_("Local variable '{0}' is assigned to but never used"),
+    "UnusedAnnotation": N_("Local variable '{0}' is annotated but never used"),
+    "RedefinedWhileUnused": N_("Redefinition of unused '{0}' (line {1})"),
+    "ImportShadowedByLoopVar": N_("Import '{0}' (line {1}) is shadowed by a loop variable"),
+    "ImportStarUsed": N_("'from {0} import *' used; unable to detect undefined names"),
+    "ImportStarUsage": N_("'{0}' may be undefined, or defined from star imports: {1}"),
+    "ReturnOutsideFunction": N_("'return' outside function"),
+    "YieldOutsideFunction": N_("'yield' outside function"),
+    "BreakOutsideLoop": N_("'break' outside loop"),
+    "ContinueOutsideLoop": N_("'continue' outside loop"),
+    "DuplicateArgument": N_("Duplicate argument '{0}' in function definition"),
+    "FStringMissingPlaceholders": N_("f-string is missing placeholders {{…}}"),
+    "IsLiteral": N_("Use ==/!= instead of 'is' to compare with literals"),
+    "IfTuple": N_("'if (…,)' is always true; perhaps a stray comma"),
+    "AssertTuple": N_("assert is always true; remove the parentheses"),
+    "RaiseNotImplemented": N_("'raise NotImplemented' should be 'raise NotImplementedError'"),
+    "MultiValueRepeatedKeyLiteral": N_("Dictionary key {0} repeated with different values"),
+    "DefaultExceptNotLast": N_("'except:' must be last"),
+    "DoctestSyntaxError": N_("Syntax error in doctest"),
+    "EagerUseOfLazyImport": N_("Lazily imported '{0}' (line {1}) is used eagerly"),
+    "ForwardAnnotationSyntaxError": N_("Syntax error in forward annotation: {0}"),
+    "FutureFeatureNotDefined": N_("Future feature is not defined: {0}"),
+    "ImportStarNotPermitted": N_("'from {0} import *' only allowed at module level"),
+    "InvalidPrintSyntax": N_("Use of >> is invalid with the print function"),
+    "LateFutureImport": N_("from __future__ imports must occur at the beginning of the file"),
+    "LazyImportNotAtModuleScope": N_("Lazy import is only allowed at module level"),
+    "LazyImportStarNotPermitted": N_("'lazy from {0} import *' is not allowed"),
+    "MultiValueRepeatedKeyVariable": N_("Dictionary key variable {0} repeated with different values"),
+    "PercentFormatExpectedMapping": N_("'…' % … expected a mapping but got a sequence"),
+    "PercentFormatExpectedSequence": N_("'…' % … expected a sequence but got a mapping"),
+    "PercentFormatExtraNamedArguments": N_("'…' % … has unused named argument(s): {0}"),
+    "PercentFormatInvalidFormat": N_("'…' % … has an invalid format string: {0}"),
+    "PercentFormatMissingArgument": N_("'…' % … is missing argument(s) for placeholder(s): {0}"),
+    "PercentFormatMixedPositionalAndNamed": N_("'…' % … has mixed positional and named placeholders"),
+    "PercentFormatPositionalCountMismatch": N_("'…' % … has {0} placeholder(s) but {1} substitution(s)"),
+    "PercentFormatStarRequiresSequence": N_("'…' % … the '*' specifier requires a sequence"),
+    "PercentFormatUnsupportedFormatCharacter": N_("'…' % … has an unsupported format character {0}"),
+    "StringDotFormatExtraNamedArguments": N_("'…'.format(…) has unused named argument(s): {0}"),
+    "StringDotFormatExtraPositionalArguments": N_("'…'.format(…) has unused positional argument(s): {0}"),
+    "StringDotFormatInvalidFormat": N_("'…'.format(…) has an invalid format string: {0}"),
+    "StringDotFormatMissingArgument": N_("'…'.format(…) is missing argument(s) for placeholder(s): {0}"),
+    "StringDotFormatMixingAutomatic": N_("'…'.format(…) mixes automatic and manual numbering"),
+    "TStringMissingPlaceholders": N_("t-string is missing placeholders {{…}}"),
+    "TooManyExpressionsInStarredAssignment": N_("Too many expressions in star-unpacking assignment"),
+    "TwoStarredExpressions": N_("Two starred expressions in assignment"),
+    "UnusedIndirectAssignment": N_("'{0} {1}' is unnecessary: the name is never assigned in this scope"),
 }
 
 
 @dataclass(frozen=True)
 class WarningType:
+    """group, title and description are English source strings; display them with tr()."""
     code: str
     group: str
     title: str
     description: str
 
 
-# Ayarlardan kapatılabilen uyarılar (Ayarlar › Editör › Denetimler). Hatalar (sözdizimi, tanımsız isim,
-# eksik argüman, bulunamayan modül, …) burada yoktur ve kapatılamaz. Yeni bir WARNING kodu eklerken buraya da ekleyin.
+# Warnings that can be disabled in the settings (Settings › Editor › Inspections). Errors (syntax,
+# undefined name, missing argument, unresolved module, …) are not here and cannot be disabled.
+# When adding a new WARNING code, add it here too.
 WARNING_TYPES: Tuple[WarningType, ...] = tuple(WarningType(*t) for t in (
-    # kullanılmayan kod
-    ("UnusedImport", "Kullanılmayan kod", "Kullanılmayan import", "İçe aktarılan isim dosyada hiç kullanılmıyor."),
-    ("UnusedVariable", "Kullanılmayan kod", "Kullanılmayan yerel değişken",
-     "Fonksiyon içinde atanan değişken hiç okunmuyor."),
-    ("UnusedAnnotation", "Kullanılmayan kod", "Kullanılmayan tip ipucu",
-     "Yerel değişken tiplenmiş ama hiç kullanılmıyor."),
-    ("UnusedIndirectAssignment", "Kullanılmayan kod", "Gereksiz global/nonlocal",
-     "global/nonlocal ile bildirilen isim bu kapsamda hiç atanmıyor."),
-    ("RedefinedWhileUnused", "Kullanılmayan kod", "Kullanılmadan yeniden tanımlama",
-     "Bir isim (import, fonksiyon, sınıf) kullanılmadan önce yeniden tanımlanıyor."),
-    ("UnreachableCode", "Kullanılmayan kod", "Erişilemeyen kod",
-     "return / raise / break / continue sonrasındaki kod hiç çalışmaz."),
-    ("StatementHasNoEffect", "Kullanılmayan kod", "Etkisiz ifade",
-     "Sonucu kullanılmayan ifade (ör. tek başına duran bir karşılaştırma)."),
-    # olası hatalar
-    ("MutableDefaultArgument", "Olası hatalar", "Değiştirilebilir varsayılan argüman",
-     "Liste/sözlük gibi varsayılan değerler çağrılar arasında paylaşılır."),
-    ("SelfAssignment", "Olası hatalar", "Kendisine atama", "x = x gibi etkisiz atama."),
-    ("BareExcept", "Olası hatalar", "Çıplak except",
-     "'except:' KeyboardInterrupt ve SystemExit dahil her şeyi yakalar."),
-    ("IsLiteral", "Olası hatalar", "Sabitle 'is' karşılaştırması",
-     "Sayı/metin sabitleriyle 'is' yerine == kullanılmalı."),
-    ("IfTuple", "Olası hatalar", "Her zaman doğru if", "'if (x,)' demet olduğu için her zaman doğrudur."),
-    ("AssertTuple", "Olası hatalar", "Her zaman doğru assert", "'assert (x, mesaj)' her zaman geçer."),
-    ("RaiseNotImplemented", "Olası hatalar", "raise NotImplemented",
-     "NotImplemented bir istisna değildir; NotImplementedError kullanın."),
-    ("MultiValueRepeatedKeyLiteral", "Olası hatalar", "Tekrar eden sözlük anahtarı",
-     "Aynı sabit anahtar sözlükte farklı değerlerle birden fazla kez yazılmış."),
-    ("MultiValueRepeatedKeyVariable", "Olası hatalar", "Tekrar eden sözlük anahtarı (değişken)",
-     "Aynı değişken anahtar sözlükte farklı değerlerle birden fazla kez yazılmış."),
-    ("ImportShadowedByLoopVar", "Olası hatalar", "Döngü değişkeni importu gölgeliyor",
-     "for döngüsünün değişkeni içe aktarılan bir ismi eziyor."),
-    ("EagerUseOfLazyImport", "Olası hatalar", "Tembel importun erken kullanımı",
-     "lazy import ile alınan isim modül yüklenirken kullanılıyor."),
-    ("SyntaxWarning", "Olası hatalar", "Derleyici uyarısı",
-     "Python derleyicisinin SyntaxWarning uyarıları (ör. 'is' ile sabit karşılaştırma)."),
-    ("InvalidEscapeSequence", "Olası hatalar", "Geçersiz kaçış dizisi",
-     "Metin içinde tanınmayan \\ kaçışı; raw string (r'…') kullanın."),
-    # gölgeleme
-    ("ShadowsBuiltin", "Gölgeleme", "Yerleşik isim gölgeleniyor",
-     "list, id, type gibi yerleşik bir isim yeniden tanımlanıyor."),
-    ("ShadowsApiName", "Gölgeleme", "Script API ismi gölgeleniyor",
-     "click, find gibi script API isimlerinden biri yeniden tanımlanıyor."),
-    # çözümleme
-    ("UnresolvedAttribute", "Çözümleme", "Bulunamayan nitelik",
-     "self.x ya da API nesnesinde tanımlı olmayan bir nitelik kullanılıyor."),
-    ("UnresolvedReference", "Çözümleme", "Modülde bulunamayan isim",
-     "İçe aktarılan modülde olmayan bir isim kullanılıyor (modul.x)."),
-    ("ImportStarUsed", "Çözümleme", "import * kullanımı",
-     "'from m import *' kullanıldığında tanımsız isimler denetlenemez."),
-    ("ImportStarUsage", "Çözümleme", "import * kaynaklı olabilecek isim",
-     "İsim tanımsız olabilir ya da bir 'import *' ile gelmiş olabilir."),
-    # kod stili
-    ("ComparisonWithSingleton", "Kod stili", "None/True/False ile == karşılaştırması",
-     "None için 'is' kullanın; True/False ile karşılaştırma yerine koşulu doğrudan yazın."),
-    ("SelfParameterName", "Kod stili", "self / cls parametre adı",
-     "Metodun ilk parametresi geleneksel olarak 'self' (sınıf metodunda 'cls') olmalı."),
-    ("GlobalAtModuleLevel", "Kod stili", "Modül düzeyinde global", "Modül düzeyinde 'global' bildirimi gereksiz."),
-    ("FStringMissingPlaceholders", "Kod stili", "Yer tutucusuz f-string", "f-string içinde {…} yok; f öneki gereksiz."),
-    ("TStringMissingPlaceholders", "Kod stili", "Yer tutucusuz t-string", "t-string içinde {…} yok."),
-    # biçim dizeleri
-    ("PercentFormatExtraNamedArguments", "Biçim dizeleri", "% biçiminde fazla isimli argüman",
-     "'…' % {…} içinde kullanılmayan anahtarlar var."),
-    ("StringDotFormatExtraNamedArguments", "Biçim dizeleri", ".format() fazla isimli argüman",
-     ".format(…) çağrısında kullanılmayan isimli argümanlar var."),
-    ("StringDotFormatExtraPositionalArguments", "Biçim dizeleri", ".format() fazla konumsal argüman",
-     ".format(…) çağrısında kullanılmayan konumsal argümanlar var."),
-    # proje
-    ("MissingImage", "Proje", "Bulunamayan görsel",
-     "Script'te adı geçen .png/.jpg görseli proje görsel klasörlerinde yok."),
+    # unused code
+    ("UnusedImport", N_("Unused code"), N_("Unused import"), N_("The imported name is never used in the file.")),
+    ("UnusedVariable", N_("Unused code"), N_("Unused local variable"),
+     N_("A variable assigned inside a function is never read.")),
+    ("UnusedAnnotation", N_("Unused code"), N_("Unused annotation"),
+     N_("A local variable is annotated but never used.")),
+    ("UnusedIndirectAssignment", N_("Unused code"), N_("Unnecessary global/nonlocal"),
+     N_("A name declared with global/nonlocal is never assigned in this scope.")),
+    ("RedefinedWhileUnused", N_("Unused code"), N_("Redefinition while unused"),
+     N_("A name (import, function, class) is redefined before it is used.")),
+    ("UnreachableCode", N_("Unused code"), N_("Unreachable code"),
+     N_("Code after return / raise / break / continue never runs.")),
+    ("StatementHasNoEffect", N_("Unused code"), N_("Statement without effect"),
+     N_("An expression whose result is not used (e.g. a comparison standing alone).")),
+    # probable bugs
+    ("MutableDefaultArgument", N_("Probable bugs"), N_("Mutable default argument"),
+     N_("Default values like lists/dicts are shared between calls.")),
+    ("SelfAssignment", N_("Probable bugs"), N_("Self assignment"), N_("An assignment without effect like x = x.")),
+    ("BareExcept", N_("Probable bugs"), N_("Bare except"),
+     N_("'except:' catches everything, including KeyboardInterrupt and SystemExit.")),
+    ("IsLiteral", N_("Probable bugs"), N_("'is' comparison with a literal"),
+     N_("Use == instead of 'is' with number/text literals.")),
+    ("IfTuple", N_("Probable bugs"), N_("Always-true if"), N_("'if (x,)' is always true because it is a tuple.")),
+    ("AssertTuple", N_("Probable bugs"), N_("Always-true assert"), N_("'assert (x, message)' always passes.")),
+    ("RaiseNotImplemented", N_("Probable bugs"), N_("raise NotImplemented"),
+     N_("NotImplemented is not an exception; use NotImplementedError.")),
+    ("MultiValueRepeatedKeyLiteral", N_("Probable bugs"), N_("Repeated dictionary key"),
+     N_("The same literal key is written more than once in a dict with different values.")),
+    ("MultiValueRepeatedKeyVariable", N_("Probable bugs"), N_("Repeated dictionary key (variable)"),
+     N_("The same variable key is written more than once in a dict with different values.")),
+    ("ImportShadowedByLoopVar", N_("Probable bugs"), N_("Loop variable shadows an import"),
+     N_("The variable of a for loop overwrites an imported name.")),
+    ("EagerUseOfLazyImport", N_("Probable bugs"), N_("Eager use of a lazy import"),
+     N_("A name imported with lazy import is used while the module is loading.")),
+    ("SyntaxWarning", N_("Probable bugs"), N_("Compiler warning"),
+     N_("SyntaxWarnings of the Python compiler (e.g. comparing a literal with 'is').")),
+    ("InvalidEscapeSequence", N_("Probable bugs"), N_("Invalid escape sequence"),
+     N_("An unrecognized \\ escape in a string; use a raw string (r'…').")),
+    # shadowing
+    ("ShadowsBuiltin", N_("Shadowing"), N_("Built-in name is shadowed"),
+     N_("A built-in name like list, id, type is redefined.")),
+    ("ShadowsApiName", N_("Shadowing"), N_("Script API name is shadowed"),
+     N_("One of the script API names like click, find is redefined.")),
+    # resolution
+    ("UnresolvedAttribute", N_("Resolution"), N_("Unresolved attribute"),
+     N_("An attribute not defined on self.x or an API object is used.")),
+    ("UnresolvedReference", N_("Resolution"), N_("Name not found in module"),
+     N_("A name that does not exist in the imported module is used (module.x).")),
+    ("ImportStarUsed", N_("Resolution"), N_("import * usage"),
+     N_("Undefined names cannot be checked when 'from m import *' is used.")),
+    ("ImportStarUsage", N_("Resolution"), N_("Name possibly from import *"),
+     N_("The name may be undefined or may come from an 'import *'.")),
+    # code style
+    ("ComparisonWithSingleton", N_("Code style"), N_("== comparison with None/True/False"),
+     N_("Use 'is' for None; write the condition directly instead of comparing with True/False.")),
+    ("SelfParameterName", N_("Code style"), N_("self / cls parameter name"),
+     N_("The first parameter of a method should conventionally be 'self' ('cls' in a class method).")),
+    ("GlobalAtModuleLevel", N_("Code style"), N_("global at module level"),
+     N_("A 'global' declaration at module level is unnecessary.")),
+    ("FStringMissingPlaceholders", N_("Code style"), N_("f-string without placeholders"),
+     N_("There is no {…} in the f-string; the f prefix is unnecessary.")),
+    ("TStringMissingPlaceholders", N_("Code style"), N_("t-string without placeholders"),
+     N_("There is no {…} in the t-string.")),
+    # format strings
+    ("PercentFormatExtraNamedArguments", N_("Format strings"), N_("Extra named argument in % format"),
+     N_("There are unused keys in '…' % {…}.")),
+    ("StringDotFormatExtraNamedArguments", N_("Format strings"), N_(".format() extra named argument"),
+     N_("There are unused named arguments in the .format(…) call.")),
+    ("StringDotFormatExtraPositionalArguments", N_("Format strings"), N_(".format() extra positional argument"),
+     N_("There are unused positional arguments in the .format(…) call.")),
+    # project
+    ("MissingImage", N_("Project"), N_("Missing image"),
+     N_("A .png/.jpg image named in the script does not exist in the project image folders.")),
 ))
 
 
 @dataclass(frozen=True)
 class Diagnostic:
     path: str
-    line: int          # 1'den
-    column: int        # satır içi karakter indeksi (Python str), 0'dan
-    end_column: int    # dışlayan; column ile aynıysa satır sonuna kadar
+    line: int          # 1-based
+    column: int        # character index within the line (Python str), 0-based
+    end_column: int    # exclusive; if equal to column, up to the end of the line
     severity: str      # ERROR | WARNING
     message: str
     code: str = ""
-    suggestion: str = ""   # hızlı düzeltme: [column, end_column) aralığının yerine yazılacak isim
+    suggestion: str = ""   # quick fix: name to write in place of the [column, end_column) range
 
     @property
     def is_error(self) -> bool:
@@ -199,9 +205,9 @@ class Diagnostic:
 
 
 # --------------------------------------------------------------------------- #
-# Denetim
+# Inspection
 # --------------------------------------------------------------------------- #
-_char_col = inspections.char_col   # ast/pyflakes sütunu UTF-8 bayt ofseti -> Python str indeksi
+_char_col = inspections.char_col   # ast/pyflakes column UTF-8 byte offset -> Python str index
 
 
 def _token_end(line_text: str, col: int) -> int:
@@ -213,7 +219,7 @@ _NAMED = {"UnusedImport", "RedefinedWhileUnused", "ImportShadowedByLoopVar", "Un
 
 
 def _find_name(line_text: str, name: str, start: int) -> Optional[Tuple[int, int]]:
-    """'os.path' / 'numpy as np' gibi import adlarında satırda görünen ismi bul."""
+    """Finds the name visible on the line for import names like 'os.path' / 'numpy as np'."""
     name = name.split(" as ")[-1].strip()
     m = re.compile(r"(?<![\w.])" + re.escape(name) + r"(?![\w])").search(line_text, start)
     return (m.start(), m.end()) if m else None
@@ -221,18 +227,18 @@ def _find_name(line_text: str, name: str, start: int) -> Optional[Tuple[int, int
 
 def _translate(msg) -> str:
     name = type(msg).__name__
-    template = _TURKISH.get(name)
+    template = _MESSAGES.get(name)
     if template:
         try:
             args = [str(a) for a in msg.message_args]
-            return template.format(*args)
+            return tr(template).format(*args)
         except (IndexError, KeyError, ValueError, AttributeError):
             pass
     return msg.message % msg.message_args
 
 
 def _suggest_name(name: str, tree: ast.AST, builtins: Iterable[str]) -> str:
-    """Tanımsız isme en yakın bilinen isim (yazım hatası düzeltmesi için)."""
+    """The known name closest to an undefined name (for fixing typos)."""
     pool = set(inspections._binding_names(tree)) | set(builtins) | inspections.BUILTIN_NAMES
     pool |= {"True", "False", "None"}
     pool.discard(name)
@@ -244,7 +250,7 @@ def check_source(text: str, path: str = "", builtins: Iterable[str] = (),
                  image_exists: Optional[Callable[[str], bool]] = None,
                  api: Optional[Mapping[str, object]] = None, search_dirs: Iterable[str] = (),
                  disabled: Collection[str] = ()) -> List[Diagnostic]:
-    """Kaynak metni denetler. image_exists verilirse string olarak geçen görsel adları da kontrol edilir."""
+    """Inspects source text. If image_exists is given, image names in strings are checked too."""
     return analyze_source(text, path, builtins, image_exists, api, search_dirs, semantic=False,
                           disabled=disabled)[0]
 
@@ -253,8 +259,8 @@ def analyze_source(text: str, path: str = "", builtins: Iterable[str] = (),
                    image_exists: Optional[Callable[[str], bool]] = None,
                    api: Optional[Mapping[str, object]] = None, search_dirs: Iterable[str] = (),
                    semantic: bool = True, disabled: Collection[str] = ()) -> Tuple[List[Diagnostic], Optional[Tokens]]:
-    """(sorunlar, anlamsal belirteçler). Sözdizimi hatasında belirteçler None'dır (eskisi korunmalı).
-    disabled: kapatılmış uyarı kodları (WARNING_TYPES); yalnızca uyarıları gizler, hatalar hep gösterilir."""
+    """(problems, semantic tokens). On a syntax error the tokens are None (keep the old ones).
+    disabled: disabled warning codes (WARNING_TYPES); only hides warnings, errors are always shown."""
     lines = text.splitlines()
 
     def line_text(n: int) -> str:
@@ -267,13 +273,13 @@ def analyze_source(text: str, path: str = "", builtins: Iterable[str] = (),
         except SyntaxError as e:
             n = e.lineno or 1
             lt = line_text(n)
-            col = max(0, (e.offset or 1) - 1)          # SyntaxError.offset karakter tabanlı, 1'den
+            col = max(0, (e.offset or 1) - 1)          # SyntaxError.offset is character based, 1-based
             end = (e.end_offset - 1) if getattr(e, "end_offset", None) and e.end_lineno == n else col + 1
             col = min(col, len(lt))
-            kind = "Girinti hatası" if isinstance(e, IndentationError) else "Sözdizimi hatası"
+            kind = tr("Indentation error") if isinstance(e, IndentationError) else tr("Syntax error")
             return [Diagnostic(path, n, col, max(col, min(end, len(lt))), ERROR,
                                f"{kind}: {e.msg}", type(e).__name__)], None
-        except ValueError as e:   # ör. kaynakta NUL karakteri
+        except ValueError as e:   # e.g. a NUL character in the source
             return [Diagnostic(path, 1, 0, 0, ERROR, str(e), "ValueError")], None
 
     out: List[Diagnostic] = []
@@ -291,7 +297,7 @@ def analyze_source(text: str, path: str = "", builtins: Iterable[str] = (),
             col = _char_col(lt, msg.col)
             name = type(msg).__name__
             end = _token_end(lt, col)
-            if name in _NAMED and msg.message_args:   # konum deyimin başı; ismin kendisini işaretle
+            if name in _NAMED and msg.message_args:   # position is the statement start; mark the name itself
                 found = _find_name(lt, str(msg.message_args[0]), col)
                 if found:
                     col, end = found
@@ -303,8 +309,8 @@ def analyze_source(text: str, path: str = "", builtins: Iterable[str] = (),
 
     try:
         issues = inspections.inspect_tree(tree, lines, api, search_dirs)
-    except Exception as e:   # denetçideki bir hata editörü durdurmasın
-        issues = [(1, 0, 0, WARNING, f"Denetim çalıştırılamadı: {e!r}", "InspectionFailed")]
+    except Exception as e:   # an error in the inspector must not stop the editor
+        issues = [(1, 0, 0, WARNING, tr("Inspection could not be run: {error!r}", error=e), "InspectionFailed")]
     for issue in issues:
         out.append(Diagnostic(path, *issue))
 
@@ -317,9 +323,9 @@ def analyze_source(text: str, path: str = "", builtins: Iterable[str] = (),
                 col = _char_col(lt, node.col_offset)
                 end = _char_col(lt, node.end_col_offset) if node.end_lineno == node.lineno else len(lt)
                 out.append(Diagnostic(path, node.lineno, col, end, WARNING,
-                                      f"Görsel bulunamadı: {node.value}", "MissingImage"))
+                                      tr("Image not found: {name}", name=node.value), "MissingImage"))
 
-    out = [d for d in dict.fromkeys(out) if not _NOQA.search(line_text(d.line))   # tekrarları at
+    out = [d for d in dict.fromkeys(out) if not _NOQA.search(line_text(d.line))   # drop duplicates
            and not (d.severity == WARNING and d.code in disabled)]
     out.sort(key=lambda d: (d.line, d.column, not d.is_error))
 
@@ -327,13 +333,13 @@ def analyze_source(text: str, path: str = "", builtins: Iterable[str] = (),
     if semantic:
         try:
             tokens = semantic_tokens(tree, lines, api)
-        except Exception:   # renklendirme hatası denetimi bozmasın
+        except Exception:   # a highlighting error must not break the inspection
             tokens = {}
     return out, tokens
 
 
 def counts(diagnostics: Iterable[Diagnostic]) -> Tuple[int, int]:
-    """(hata, uyarı) sayısı."""
+    """(errors, warnings) count."""
     errors = warnings = 0
     for d in diagnostics:
         if d.is_error:
@@ -344,15 +350,15 @@ def counts(diagnostics: Iterable[Diagnostic]) -> Tuple[int, int]:
 
 
 # --------------------------------------------------------------------------- #
-# Depo
+# Store
 # --------------------------------------------------------------------------- #
 def _key(path: str) -> str:
     return os.path.normcase(os.path.abspath(path))
 
 
 class DiagnosticsStore(QObject):
-    """Dosya -> sorun listesi. `changed(path)` bir dosyanın listesi değişince, `reset()` hepsi
-    birden yenilenince yayılır."""
+    """File -> list of problems. `changed(path)` is emitted when one file's list changes, `reset()`
+    when all of them are renewed at once."""
 
     changed = Signal(str)
     reset = Signal()
@@ -364,8 +370,8 @@ class DiagnosticsStore(QObject):
         self._ctx = ctx
         self._items: Dict[str, List[Diagnostic]] = {}
         self._display: Dict[str, str] = {}
-        self._live: Dict[str, int] = {}                      # editörde açık dosyalar (sayaç)
-        self._stamps: Dict[str, Tuple[int, int]] = {}        # diskten denetlenenlerin damgası
+        self._live: Dict[str, int] = {}                      # files open in an editor (counter)
+        self._stamps: Dict[str, Tuple[int, int]] = {}        # stamps of the files inspected from disk
         self._builtins: Optional[frozenset] = None
         self._api: Optional[Dict[str, object]] = None
         self._scan_timer = QTimer(self, interval=self.SCAN_INTERVAL_MS)
@@ -380,30 +386,30 @@ class DiagnosticsStore(QObject):
             self._disabled = disabled
             self.recheck_all()
 
-    # ---- sorgu ----------------------------------------------------------- #
+    # ---- query ----------------------------------------------------------- #
     def get(self, path: str) -> List[Diagnostic]:
         return list(self._items.get(_key(path), []))
 
     def files(self) -> List[str]:
-        """Sorunu olan dosyalar (görünen yollarıyla, sıralı)."""
+        """Files with problems (with their display paths, sorted)."""
         return sorted((self._display[k] for k, v in self._items.items() if v), key=str.lower)
 
     def totals(self) -> Tuple[int, int]:
         return counts(d for items in self._items.values() for d in items)
 
-    # ---- denetim --------------------------------------------------------- #
+    # ---- inspection ------------------------------------------------------ #
     def builtins(self) -> frozenset:
-        """Script'lerin çalışırken hazır bulduğu isimler (API) pyflakes için yerleşik sayılır."""
+        """Names scripts find ready at runtime (the API) count as builtins for pyflakes."""
         if self._builtins is None:
             try:
                 from .completion import api_names
                 self._builtins = frozenset(api_names())
-            except Exception:   # API yüklenemezse tanımsız isim uyarıları fazla çıkar, ama çalışır
+            except Exception:   # if the API cannot load there are extra undefined-name warnings, but it works
                 self._builtins = frozenset()
         return self._builtins
 
     def api(self) -> Mapping[str, object]:
-        """Script API nesneleri (çağrı imzası denetimi ve renklendirme için)."""
+        """Script API objects (for call signature checks and highlighting)."""
         if self._api is None:
             try:
                 from .completion import script_namespace
@@ -413,7 +419,7 @@ class DiagnosticsStore(QObject):
         return self._api
 
     def _search_dirs(self, path: str) -> List[str]:
-        """Script çalışırken import yolunda olan proje klasörleri."""
+        """Project folders that are on the import path while a script runs."""
         project = self._ctx.project
         return [os.path.dirname(path)] + ([project.root] if project else [])
 
@@ -430,7 +436,7 @@ class DiagnosticsStore(QObject):
                             disabled=self.disabled())
 
     def disabled(self) -> frozenset:
-        """Ayarlardan kapatılmış uyarı kodları."""
+        """Warning codes disabled in the settings."""
         return self._disabled
 
     def publish(self, path: str, diagnostics: List[Diagnostic]) -> None:
@@ -447,13 +453,13 @@ class DiagnosticsStore(QObject):
         if self._items.pop(k, None):
             self.changed.emit(self._display.get(k, path))
 
-    # ---- açık editörler -------------------------------------------------- #
+    # ---- open editors ---------------------------------------------------- #
     def attach_live(self, path: str) -> None:
         k = _key(path)
         self._live[k] = self._live.get(k, 0) + 1
 
     def detach_live(self, path: str) -> None:
-        """Editör kapandı: dosya artık diskten denetlenir (proje dışındaysa listeden çıkar)."""
+        """The editor was closed: the file is now inspected from disk (removed from the list if outside the project)."""
         k = _key(path)
         n = self._live.get(k, 0) - 1
         if n > 0:
@@ -467,7 +473,7 @@ class DiagnosticsStore(QObject):
         else:
             self._check_disk(path)
 
-    # ---- proje taraması --------------------------------------------------- #
+    # ---- project scan ---------------------------------------------------- #
     def set_project(self, project) -> None:
         self._items.clear()
         self._display.clear()
@@ -480,7 +486,7 @@ class DiagnosticsStore(QObject):
         self._scan_timer.start()
 
     def recheck_all(self) -> None:
-        """Görseller/paketler değişti: 'görsel bulunamadı' ve 'modül bulunamadı' için her şeyi yeniden denetle."""
+        """Images/packages changed: re-inspect everything for 'image not found' and 'module not found'."""
         inspections.clear_module_cache()
         self._stamps.clear()
         self.scan_project()
@@ -489,7 +495,7 @@ class DiagnosticsStore(QObject):
                 editor.schedule_diagnostics()
 
     def scan_project(self) -> None:
-        """Açık olmayan .py dosyalarını diskten denetle; yalnızca değişenler yeniden işlenir."""
+        """Inspects .py files that are not open from disk; only changed ones are processed again."""
         project = self._ctx.project
         if project is None:
             return
@@ -500,7 +506,7 @@ class DiagnosticsStore(QObject):
             if k not in self._live:
                 self._check_disk(path)
         for k in [k for k in self._items if k not in seen and k not in self._live]:
-            self.remove(self._display.get(k, k))   # silinmiş dosyalar
+            self.remove(self._display.get(k, k))   # deleted files
 
     def _check_disk(self, path: str) -> None:
         k = _key(path)

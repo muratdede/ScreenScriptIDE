@@ -1,4 +1,4 @@
-"""Ekran görüntüsü sağlayıcıları: script API'si ile adb_capture arasındaki köprü."""
+"""Screenshot providers: the bridge between the script API and adb_capture."""
 
 from __future__ import annotations
 
@@ -6,15 +6,16 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 
+from ...i18n import tr
 from ..adb_capture import FrameSource, LatestFrameBuffer, PeriodicCapturer
 
 
 class ImageProvider(ABC):
-    """Script API'nin ekranı gördüğü tek yer."""
+    """The only place where the script API sees the screen."""
 
     @abstractmethod
     def snapshot(self, fresh: bool = True) -> np.ndarray:
-        """Güncel ekran görüntüsü (BGR). fresh=True ise öncekinden daha yeni bir kare garanti edilir."""
+        """Current screenshot (BGR). If fresh=True a frame newer than the previous one is guaranteed."""
 
     def open(self) -> None: ...
 
@@ -22,7 +23,7 @@ class ImageProvider(ABC):
 
 
 class OnDemandProvider(ImageProvider):
-    """Her istekte kaynaktan doğrudan kare çeker. Basit ve her zaman günceldir."""
+    """Grabs a frame directly from the source on every request. Simple and always up to date."""
 
     def __init__(self, source: FrameSource):
         self._source = source
@@ -38,8 +39,8 @@ class OnDemandProvider(ImageProvider):
 
 
 class BackgroundProvider(ImageProvider):
-    """PeriodicCapturer arka planda sürekli yakalar; snapshot en son kareyi verir.
-    Script başka iş yaparken de ekran taze kalır."""
+    """PeriodicCapturer captures continuously in the background; snapshot returns the latest frame.
+    The screen stays fresh while the script does other work."""
 
     def __init__(self, source: FrameSource, interval: float = 0.3, timeout: float = 10.0):
         self._buffer = LatestFrameBuffer()
@@ -60,7 +61,7 @@ class BackgroundProvider(ImageProvider):
     def snapshot(self, fresh=True):
         frame = self._buffer.wait_next(self._last_index if fresh else -1, timeout=self._timeout)
         if frame is None:
-            raise TimeoutError(f"{self._timeout} sn içinde kare gelmedi. Son hata: "
-                               f"{self._capturer.stats.last_error}")
+            raise TimeoutError(tr("No frame arrived within {timeout} s. Last error: {error}",
+                                  timeout=self._timeout, error=self._capturer.stats.last_error))
         self._last_index = frame.index
         return frame.image

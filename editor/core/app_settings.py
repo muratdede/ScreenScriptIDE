@@ -1,16 +1,15 @@
-"""Uygulama (kullanıcı) düzeyindeki ayarlar ve dosyalar.
+"""Application (user) level settings and files.
 
-Hepsi tek klasörde durur: %LOCALAPPDATA%\\ScreenScript  (Linux/macOS: ~/.local/share/ScreenScript)
-    ide.ini              — IDE durumu: pencere yerleşimi, son projeler, açık dosyalar (QSettings, INI)
-    settings.json        — uygulama ayarları (cihaz bağlantısı, Telegram bot token'ı ...); Qt gerektirmez,
-                           script süreci (editor.agent.runner) de buradan okur
-    telegram_chats.json  — kullanıcı adı -> chat_id önbelleği
-    *.session            — Telegram oturum dosyaları (çalışma alanında tutulmaz)
+Everything lives in one folder: %LOCALAPPDATA%\\ScreenScript  (Linux/macOS: ~/.local/share/ScreenScript)
+    ide.ini              — IDE state: window layout, recent projects, open files (QSettings, INI)
+    settings.json        — application settings (device connection, Telegram bot token, language ...);
+                           does not need Qt, the script process (editor.agent.runner) reads it too
+    telegram_chats.json  — username -> chat_id cache
+    *.session            — Telegram session files (not kept in the workspace)
 
-Proje klasörlerinde gizli bilgi kalmaz. Eski sürümlerin bıraktıkları ilk açılışta buraya taşınır:
-Windows kayıt defterindeki QSettings değerleri, proje .screenscript.json'undaki telegram_* ve cihaz
-bağlantısı alanları,
-proje kökündeki .telegram_chats.json ve çalışma alanındaki *.session dosyaları.
+No secrets stay in project folders. Leftovers from older versions are moved here on first start:
+QSettings values in the Windows registry, telegram_* and device connection fields in the project's
+.screenscript.json, .telegram_chats.json in the project root and *.session files in the workspace.
 """
 
 from __future__ import annotations
@@ -22,6 +21,8 @@ import os
 import shutil
 from dataclasses import asdict, dataclass, field, fields
 from typing import List, Optional
+
+from ..i18n import tr
 
 log = logging.getLogger(__name__)
 
@@ -44,28 +45,32 @@ def telegram_cache_path() -> str:
 
 
 def telegram_session_path(name: str = "oturum") -> str:
-    """Telethon gibi kütüphaneler için oturum dosyası yolu (uzantısız verilirse .session eklenir)."""
+    """Session file path for libraries like Telethon (.session is appended when missing).
+    The default name is kept from older versions so existing session files are still found."""
     return app_file(name if name.endswith(".session") else name + ".session")
 
 
 @dataclass
 class AppConfig:
-    """Tüm projelerde ortak kullanıcı ayarları. Yeni alan eklemek geriye dönük uyumludur."""
+    """User settings shared by all projects. Adding new fields is backwards compatible."""
 
-    # cihaz bağlantısı (bu bilgisayardaki emülatöre/cihaza bağlı; projeden bağımsız)
+    # interface language: "" = automatic (system language), otherwise a code from i18n.LANGUAGES
+    language: str = ""
+
+    # device connection (tied to the emulator/device on this computer; independent of the project)
     host: str = "127.0.0.1"
     port: int = 5555
     adb_path: str = ""
-    screencap_format: str = "stream"   # stream (H.264, hızlı) | raw | png
-    background: bool = False           # script çalışırken arka planda sürekli yakala
+    screencap_format: str = "stream"   # stream (H.264, fast) | raw | png
+    background: bool = False           # capture continuously in the background while a script runs
 
-    # push_notification: Telegram bot token'ı (boşsa TELEGRAM_BOT_TOKEN ortam değişkeni) ve
-    # bildirim alacak kullanıcı adı. Kullanıcının bota bir kez Start demiş olması gerekir.
+    # push_notification: Telegram bot token (TELEGRAM_BOT_TOKEN environment variable when empty) and
+    # the username receiving notifications. The user must have pressed Start in the bot once.
     telegram_token: str = ""
     telegram_username: str = ""
-    telegram_commands: bool = True     # editör açıkken bota gelen /capture gibi komutları yanıtla
+    telegram_commands: bool = True     # answer commands like /capture sent to the bot while the editor is open
 
-    # kod denetimi: kapatılmış uyarı kodları (diagnostics.WARNING_TYPES); hatalar kapatılamaz
+    # code inspection: disabled warning codes (diagnostics.WARNING_TYPES); errors cannot be disabled
     disabled_warnings: List[str] = field(default_factory=list)
 
     FILE = "settings.json"
@@ -88,7 +93,7 @@ class AppConfig:
         except FileNotFoundError:
             return {}
         except (OSError, ValueError) as e:
-            log.warning("Uygulama ayarları okunamadı: %s (%s)", cls.path(), e)
+            log.warning(tr("Application settings could not be read: %s (%s)"), cls.path(), e)
             return {}
 
     def save(self) -> None:
@@ -102,7 +107,7 @@ class AppConfig:
 
 
 # --------------------------------------------------------------------------- #
-# Eski konumlardan taşıma
+# Migration from old locations
 # --------------------------------------------------------------------------- #
 TELEGRAM_KEYS = ("telegram_token", "telegram_username")
 DEVICE_KEYS = ("host", "port", "adb_path", "screencap_format", "background")
@@ -110,8 +115,8 @@ OLD_TELEGRAM_CACHE = ".telegram_chats.json"
 
 
 def migrate_project(root: str, raw_config: dict) -> bool:
-    """Proje ayarındaki telegram_* ve cihaz bağlantısı alanlarını, proje kökündeki önbelleği uygulama
-    ayarlarına taşır. Proje ayar dosyasının yeniden yazılması gerekiyorsa True döndürür."""
+    """Moves telegram_* and device connection fields of the project config, and the cache in the
+    project root, into the application settings. Returns True if the project config must be rewritten."""
     rewrite = False
     if any(k in raw_config for k in TELEGRAM_KEYS + DEVICE_KEYS):
         app = AppConfig.load()
@@ -119,12 +124,12 @@ def migrate_project(root: str, raw_config: dict) -> bool:
         changed = False
         for key in TELEGRAM_KEYS:
             value = str(raw_config.get(key) or "").strip()
-            if value and not getattr(app, key):   # kullanıcı ayarı zaten varsa ezilmez
+            if value and not getattr(app, key):   # an existing user setting is not overwritten
                 setattr(app, key, value)
                 changed = True
         for key in DEVICE_KEYS:
-            # varsayılanlar boş olmadığından "zaten ayarlı" = settings.json'da anahtar var;
-            # böylece ilk taşınan projenin bağlantısı alınır, sonrakiler ezmez
+            # defaults are not empty, so "already set" = the key exists in settings.json;
+            # this way the first migrated project's connection is taken and later ones don't overwrite it
             if key in raw_config and key not in saved:
                 value = raw_config[key]
                 if key == "port":
@@ -137,8 +142,8 @@ def migrate_project(root: str, raw_config: dict) -> bool:
                 changed = True
         if changed:
             app.save()
-            log.info("Proje ayarlarındaki Telegram/cihaz bağlantısı alanları uygulama ayarlarına taşındı: %s",
-                     root)
+            log.info(tr("Telegram/device connection fields in the project settings were moved to the "
+                        "application settings: %s"), root)
         rewrite = True
     _merge_telegram_cache(os.path.join(root, OLD_TELEGRAM_CACHE))
     move_session_files(root)
@@ -161,39 +166,39 @@ def _merge_telegram_cache(old_path: str) -> None:
             json.dump(merged, f, indent=2, ensure_ascii=False)
         os.remove(old_path)
     except (OSError, ValueError) as e:
-        log.warning("Telegram önbelleği taşınamadı: %s (%s)", old_path, e)
+        log.warning(tr("Telegram cache could not be moved: %s (%s)"), old_path, e)
 
 
 def move_session_files(directory: str) -> List[str]:
-    """Klasördeki *.session (ve -journal) dosyalarını uygulama klasörüne taşır. Hedefte aynı adda
-    dosya varsa kaynak olduğu gibi bırakılır (veri kaybı olmasın)."""
+    """Moves *.session (and -journal) files in the folder to the application folder. If a file with
+    the same name exists at the destination, the source is left as is (to avoid data loss)."""
     moved = []
     for src in glob.glob(os.path.join(directory, "*.session")) + \
             glob.glob(os.path.join(directory, "*.session-journal")):
         dst = app_file(os.path.basename(src))
         if os.path.exists(dst):
-            log.warning("Oturum dosyası taşınmadı, hedefte zaten var: %s", dst)
+            log.warning(tr("Session file not moved, it already exists at the destination: %s"), dst)
             continue
         try:
             shutil.move(src, dst)
             moved.append(dst)
-            log.info("Oturum dosyası taşındı: %s -> %s", src, dst)
+            log.info(tr("Session file moved: %s -> %s"), src, dst)
         except OSError as e:
-            log.warning("Oturum dosyası taşınamadı (kullanımda olabilir): %s (%s)", src, e)
+            log.warning(tr("Session file could not be moved (it may be in use): %s (%s)"), src, e)
     return moved
 
 
 # --------------------------------------------------------------------------- #
-# IDE durumu (Qt)
+# IDE state (Qt)
 # --------------------------------------------------------------------------- #
 def create_ide_settings(migrate_registry: bool = True):
-    """%LOCALAPPDATA%\\ScreenScript\\ide.ini'ye yazan QSettings. İlk açılışta eski (kayıt defteri)
-    değerleri kopyalanır ve eski konum temizlenir."""
+    """QSettings writing to %LOCALAPPDATA%\\ScreenScript\\ide.ini. On first start the old (registry)
+    values are copied and the old location is cleared."""
     from PySide6.QtCore import QSettings
 
     settings = QSettings(app_file("ide.ini"), QSettings.IniFormat)
     if migrate_registry and not settings.allKeys():
-        old = QSettings(APP_NAME, "IDE")   # eski: HKCU\Software\ScreenScript\IDE
+        old = QSettings(APP_NAME, "IDE")   # old: HKCU\Software\ScreenScript\IDE
         keys = old.allKeys()
         if keys:
             for key in keys:
@@ -201,7 +206,7 @@ def create_ide_settings(migrate_registry: bool = True):
             settings.sync()
             old.clear()
             old.sync()
-            log.info("IDE ayarları kayıt defterinden taşındı: %d anahtar", len(keys))
+            log.info(tr("IDE settings were moved from the registry: %d keys"), len(keys))
     return settings
 
 

@@ -1,4 +1,4 @@
-"""Veri sınıfları: yakalanan kare ve kırpma bölgesi."""
+"""Data classes: a captured frame and a crop region."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Region:
-    """Görüntüde dikdörtgen bir bölge (piksel)."""
+    """A rectangular region in an image (pixels)."""
 
     x: int
     y: int
@@ -18,7 +18,7 @@ class Region:
 
     @classmethod
     def parse(cls, text: str) -> "Region":
-        """'x,y,w,h' metninden bölge oluşturur."""
+        """Creates a region from 'x,y,w,h' text."""
         x, y, w, h = (int(v) for v in text.split(","))
         return cls(x, y, w, h)
 
@@ -28,12 +28,12 @@ class Region:
 
 @dataclass(frozen=True)
 class Frame:
-    """Yakalanmış tek bir kare. image OpenCV formatındadır (BGR, uint8)."""
+    """A single captured frame. image is in OpenCV format (BGR, uint8)."""
 
     image: np.ndarray
     index: int
     timestamp: float       # time.time()
-    capture_ms: float      # yakalamanın kaç ms sürdüğü
+    capture_ms: float      # how many ms the capture took
     source: str
 
     @property
