@@ -75,6 +75,7 @@ _ICONS = {
     "refresh": '<path d="M13 8a5 5 0 1 1-1.5-3.6"/><path d="M13 2.5v3h-3"/>',
     "more": "".join(_DOTS.replace("{x}", "8").replace("{y}", str(y)) for y in (3.5, 8, 12.5)),
     "minimize": '<path d="M3.5 8h9"/>',
+    "pin": '<path d="M6 1.5h4M6.5 1.5v4L4 8.5h8L9.5 5.5v-4M8 8.5v6"/>',
     "float": '<rect x="2.5" y="5" width="8.5" height="8.5" rx="1"/><path d="M5.5 2.5h8v8"/>',
     "file": '<path d="M3.5 1.5h6l3 3v10h-9z"/><path d="M9.5 1.5v3h3"/>',
     "python": '<path d="M8 1.8c-2.8 0-3 1.2-3 2.1v1.4h3.1v.6H3.8C2.6 5.9 1.6 6.8 1.6 8.7c0 1.9.9 2.9 2.1 2.9H5V9.9'

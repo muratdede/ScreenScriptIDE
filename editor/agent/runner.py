@@ -39,9 +39,10 @@ def load_project(args) -> Project:
 
 def main() -> int:
     args = parse_args()
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout,
-                        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
     project = load_project(args)
+    level = getattr(logging, str(project.config.log_level).upper(), logging.INFO)   # Proje Ayarları > Hata Ayıklama
+    logging.basicConfig(level=level, stream=sys.stdout,
+                        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S")
     os.chdir(project.root)
     script = os.path.abspath(args.script)
 

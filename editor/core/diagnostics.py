@@ -19,7 +19,7 @@ import os
 import re
 import warnings
 from dataclasses import dataclass
-from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Callable, Collection, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -99,6 +99,90 @@ _TURKISH = {
 
 
 @dataclass(frozen=True)
+class WarningType:
+    code: str
+    group: str
+    title: str
+    description: str
+
+
+# Ayarlardan kapatılabilen uyarılar (Ayarlar › Editör › Denetimler). Hatalar (sözdizimi, tanımsız isim,
+# eksik argüman, bulunamayan modül, …) burada yoktur ve kapatılamaz. Yeni bir WARNING kodu eklerken buraya da ekleyin.
+WARNING_TYPES: Tuple[WarningType, ...] = tuple(WarningType(*t) for t in (
+    # kullanılmayan kod
+    ("UnusedImport", "Kullanılmayan kod", "Kullanılmayan import", "İçe aktarılan isim dosyada hiç kullanılmıyor."),
+    ("UnusedVariable", "Kullanılmayan kod", "Kullanılmayan yerel değişken",
+     "Fonksiyon içinde atanan değişken hiç okunmuyor."),
+    ("UnusedAnnotation", "Kullanılmayan kod", "Kullanılmayan tip ipucu",
+     "Yerel değişken tiplenmiş ama hiç kullanılmıyor."),
+    ("UnusedIndirectAssignment", "Kullanılmayan kod", "Gereksiz global/nonlocal",
+     "global/nonlocal ile bildirilen isim bu kapsamda hiç atanmıyor."),
+    ("RedefinedWhileUnused", "Kullanılmayan kod", "Kullanılmadan yeniden tanımlama",
+     "Bir isim (import, fonksiyon, sınıf) kullanılmadan önce yeniden tanımlanıyor."),
+    ("UnreachableCode", "Kullanılmayan kod", "Erişilemeyen kod",
+     "return / raise / break / continue sonrasındaki kod hiç çalışmaz."),
+    ("StatementHasNoEffect", "Kullanılmayan kod", "Etkisiz ifade",
+     "Sonucu kullanılmayan ifade (ör. tek başına duran bir karşılaştırma)."),
+    # olası hatalar
+    ("MutableDefaultArgument", "Olası hatalar", "Değiştirilebilir varsayılan argüman",
+     "Liste/sözlük gibi varsayılan değerler çağrılar arasında paylaşılır."),
+    ("SelfAssignment", "Olası hatalar", "Kendisine atama", "x = x gibi etkisiz atama."),
+    ("BareExcept", "Olası hatalar", "Çıplak except",
+     "'except:' KeyboardInterrupt ve SystemExit dahil her şeyi yakalar."),
+    ("IsLiteral", "Olası hatalar", "Sabitle 'is' karşılaştırması",
+     "Sayı/metin sabitleriyle 'is' yerine == kullanılmalı."),
+    ("IfTuple", "Olası hatalar", "Her zaman doğru if", "'if (x,)' demet olduğu için her zaman doğrudur."),
+    ("AssertTuple", "Olası hatalar", "Her zaman doğru assert", "'assert (x, mesaj)' her zaman geçer."),
+    ("RaiseNotImplemented", "Olası hatalar", "raise NotImplemented",
+     "NotImplemented bir istisna değildir; NotImplementedError kullanın."),
+    ("MultiValueRepeatedKeyLiteral", "Olası hatalar", "Tekrar eden sözlük anahtarı",
+     "Aynı sabit anahtar sözlükte farklı değerlerle birden fazla kez yazılmış."),
+    ("MultiValueRepeatedKeyVariable", "Olası hatalar", "Tekrar eden sözlük anahtarı (değişken)",
+     "Aynı değişken anahtar sözlükte farklı değerlerle birden fazla kez yazılmış."),
+    ("ImportShadowedByLoopVar", "Olası hatalar", "Döngü değişkeni importu gölgeliyor",
+     "for döngüsünün değişkeni içe aktarılan bir ismi eziyor."),
+    ("EagerUseOfLazyImport", "Olası hatalar", "Tembel importun erken kullanımı",
+     "lazy import ile alınan isim modül yüklenirken kullanılıyor."),
+    ("SyntaxWarning", "Olası hatalar", "Derleyici uyarısı",
+     "Python derleyicisinin SyntaxWarning uyarıları (ör. 'is' ile sabit karşılaştırma)."),
+    ("InvalidEscapeSequence", "Olası hatalar", "Geçersiz kaçış dizisi",
+     "Metin içinde tanınmayan \\ kaçışı; raw string (r'…') kullanın."),
+    # gölgeleme
+    ("ShadowsBuiltin", "Gölgeleme", "Yerleşik isim gölgeleniyor",
+     "list, id, type gibi yerleşik bir isim yeniden tanımlanıyor."),
+    ("ShadowsApiName", "Gölgeleme", "Script API ismi gölgeleniyor",
+     "click, find gibi script API isimlerinden biri yeniden tanımlanıyor."),
+    # çözümleme
+    ("UnresolvedAttribute", "Çözümleme", "Bulunamayan nitelik",
+     "self.x ya da API nesnesinde tanımlı olmayan bir nitelik kullanılıyor."),
+    ("UnresolvedReference", "Çözümleme", "Modülde bulunamayan isim",
+     "İçe aktarılan modülde olmayan bir isim kullanılıyor (modul.x)."),
+    ("ImportStarUsed", "Çözümleme", "import * kullanımı",
+     "'from m import *' kullanıldığında tanımsız isimler denetlenemez."),
+    ("ImportStarUsage", "Çözümleme", "import * kaynaklı olabilecek isim",
+     "İsim tanımsız olabilir ya da bir 'import *' ile gelmiş olabilir."),
+    # kod stili
+    ("ComparisonWithSingleton", "Kod stili", "None/True/False ile == karşılaştırması",
+     "None için 'is' kullanın; True/False ile karşılaştırma yerine koşulu doğrudan yazın."),
+    ("SelfParameterName", "Kod stili", "self / cls parametre adı",
+     "Metodun ilk parametresi geleneksel olarak 'self' (sınıf metodunda 'cls') olmalı."),
+    ("GlobalAtModuleLevel", "Kod stili", "Modül düzeyinde global", "Modül düzeyinde 'global' bildirimi gereksiz."),
+    ("FStringMissingPlaceholders", "Kod stili", "Yer tutucusuz f-string", "f-string içinde {…} yok; f öneki gereksiz."),
+    ("TStringMissingPlaceholders", "Kod stili", "Yer tutucusuz t-string", "t-string içinde {…} yok."),
+    # biçim dizeleri
+    ("PercentFormatExtraNamedArguments", "Biçim dizeleri", "% biçiminde fazla isimli argüman",
+     "'…' % {…} içinde kullanılmayan anahtarlar var."),
+    ("StringDotFormatExtraNamedArguments", "Biçim dizeleri", ".format() fazla isimli argüman",
+     ".format(…) çağrısında kullanılmayan isimli argümanlar var."),
+    ("StringDotFormatExtraPositionalArguments", "Biçim dizeleri", ".format() fazla konumsal argüman",
+     ".format(…) çağrısında kullanılmayan konumsal argümanlar var."),
+    # proje
+    ("MissingImage", "Proje", "Bulunamayan görsel",
+     "Script'te adı geçen .png/.jpg görseli proje görsel klasörlerinde yok."),
+))
+
+
+@dataclass(frozen=True)
 class Diagnostic:
     path: str
     line: int          # 1'den
@@ -158,16 +242,19 @@ def _suggest_name(name: str, tree: ast.AST, builtins: Iterable[str]) -> str:
 
 def check_source(text: str, path: str = "", builtins: Iterable[str] = (),
                  image_exists: Optional[Callable[[str], bool]] = None,
-                 api: Optional[Mapping[str, object]] = None, search_dirs: Iterable[str] = ()) -> List[Diagnostic]:
+                 api: Optional[Mapping[str, object]] = None, search_dirs: Iterable[str] = (),
+                 disabled: Collection[str] = ()) -> List[Diagnostic]:
     """Kaynak metni denetler. image_exists verilirse string olarak geçen görsel adları da kontrol edilir."""
-    return analyze_source(text, path, builtins, image_exists, api, search_dirs, semantic=False)[0]
+    return analyze_source(text, path, builtins, image_exists, api, search_dirs, semantic=False,
+                          disabled=disabled)[0]
 
 
 def analyze_source(text: str, path: str = "", builtins: Iterable[str] = (),
                    image_exists: Optional[Callable[[str], bool]] = None,
                    api: Optional[Mapping[str, object]] = None, search_dirs: Iterable[str] = (),
-                   semantic: bool = True) -> Tuple[List[Diagnostic], Optional[Tokens]]:
-    """(sorunlar, anlamsal belirteçler). Sözdizimi hatasında belirteçler None'dır (eskisi korunmalı)."""
+                   semantic: bool = True, disabled: Collection[str] = ()) -> Tuple[List[Diagnostic], Optional[Tokens]]:
+    """(sorunlar, anlamsal belirteçler). Sözdizimi hatasında belirteçler None'dır (eskisi korunmalı).
+    disabled: kapatılmış uyarı kodları (WARNING_TYPES); yalnızca uyarıları gizler, hatalar hep gösterilir."""
     lines = text.splitlines()
 
     def line_text(n: int) -> str:
@@ -232,7 +319,8 @@ def analyze_source(text: str, path: str = "", builtins: Iterable[str] = (),
                 out.append(Diagnostic(path, node.lineno, col, end, WARNING,
                                       f"Görsel bulunamadı: {node.value}", "MissingImage"))
 
-    out = [d for d in dict.fromkeys(out) if not _NOQA.search(line_text(d.line))]   # tekrarları at
+    out = [d for d in dict.fromkeys(out) if not _NOQA.search(line_text(d.line))   # tekrarları at
+           and not (d.severity == WARNING and d.code in disabled)]
     out.sort(key=lambda d: (d.line, d.column, not d.is_error))
 
     tokens = None
@@ -282,7 +370,15 @@ class DiagnosticsStore(QObject):
         self._api: Optional[Dict[str, object]] = None
         self._scan_timer = QTimer(self, interval=self.SCAN_INTERVAL_MS)
         self._scan_timer.timeout.connect(self.scan_project)
+        self._disabled = frozenset(getattr(ctx.app_config, "disabled_warnings", ()) or ())
         ctx.images.changed.connect(lambda _paths: self.recheck_all())
+        ctx.bus.app_config_changed.connect(self._on_app_config)
+
+    def _on_app_config(self, config) -> None:
+        disabled = frozenset(getattr(config, "disabled_warnings", ()) or ())
+        if disabled != self._disabled:
+            self._disabled = disabled
+            self.recheck_all()
 
     # ---- sorgu ----------------------------------------------------------- #
     def get(self, path: str) -> List[Diagnostic]:
@@ -324,12 +420,18 @@ class DiagnosticsStore(QObject):
     def analyze(self, path: str, text: str) -> Tuple[List[Diagnostic], Optional[Tokens]]:
         project = self._ctx.project
         exists = (lambda name: project.find_image(name, os.path.dirname(path)) is not None) if project else None
-        return analyze_source(text, path, self.builtins(), exists, self.api(), self._search_dirs(path))
+        return analyze_source(text, path, self.builtins(), exists, self.api(), self._search_dirs(path),
+                              disabled=self.disabled())
 
     def check(self, path: str, text: str) -> List[Diagnostic]:
         project = self._ctx.project
         exists = (lambda name: project.find_image(name, os.path.dirname(path)) is not None) if project else None
-        return check_source(text, path, self.builtins(), exists, self.api(), self._search_dirs(path))
+        return check_source(text, path, self.builtins(), exists, self.api(), self._search_dirs(path),
+                            disabled=self.disabled())
+
+    def disabled(self) -> frozenset:
+        """Ayarlardan kapatılmış uyarı kodları."""
+        return self._disabled
 
     def publish(self, path: str, diagnostics: List[Diagnostic]) -> None:
         k = _key(path)

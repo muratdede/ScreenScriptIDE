@@ -38,6 +38,7 @@ class ProjectConfig:
     humanize: bool = False
     tap_ms: int = 0                  # dokunuş basılı kalma süresi (ms); 0 = anlık "input tap"
     save_on_fail: bool = True
+    log_level: str = "INFO"          # script çıktısındaki log seviyesi: DEBUG, INFO, WARNING, ERROR
     ocr: str = "auto"                # metin okuma motoru: auto, rapid, windows
     main_script: str = "main.py"
     script_args: Dict[str, str] = field(default_factory=dict)

@@ -13,7 +13,8 @@ from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QComboBox, QDoubleSpinBox, QFileDialog, QFrame, QGraphicsEllipseItem,
                                QGraphicsItem, QGraphicsPixmapItem,
                                QGraphicsRectItem, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsView,
-                               QHBoxLayout, QInputDialog, QLabel, QMessageBox, QToolButton, QVBoxLayout,
+                               QHBoxLayout, QInputDialog, QLabel, QMessageBox, QSizePolicy, QToolButton,
+                               QVBoxLayout,
                                QWidget)
 
 from ...plugins.screenscript import ImageLibrary, ImagePath, Key, Pattern
@@ -287,6 +288,7 @@ class ScreenView(DockView):
     default_area = Qt.RightDockWidgetArea
     tab_group = "right"
     shortcut = "Alt+3"
+    pinnable = True
 
     def build(self):
         w = QWidget()
@@ -328,7 +330,8 @@ class ScreenView(DockView):
         layout.addLayout(bar)
 
         # 2. satır: eşleşme testi
-        test = QHBoxLayout()
+        self._test_row = QWidget()
+        test = QHBoxLayout(self._test_row)
         test.setContentsMargins(8, 0, 8, 6)
         test.setSpacing(4)
         self._pattern_box = RefreshingComboBox()
@@ -344,7 +347,7 @@ class ScreenView(DockView):
         test.addWidget(self._sim)
         self._button(test, "Göster", "match", "Seçili görseli bu ekran görüntüsünde ara", self._test_pattern)
         self._button(test, "", "trash", "İşaretleri kaldır", lambda: self._canvas.clear_matches())
-        layout.addLayout(test)
+        layout.addWidget(self._test_row)
 
         self._canvas = ScreenCanvas()
         self._canvas.selection_changed.connect(self._on_selection)
@@ -363,15 +366,18 @@ class ScreenView(DockView):
         self.ctx.device_input.failed.connect(self._on_input_failed)
         layout.addWidget(self._canvas, 1)
 
-        status = QHBoxLayout()
+        self._status_row = QWidget()
+        status = QHBoxLayout(self._status_row)
         status.setContentsMargins(10, 4, 10, 5)
         self._status = QLabel("Ekran görüntüsü yok. 'Yakala' ile cihazdan canlı alın.")
         self._status.setObjectName("hint")
+        # uzun mesajlar pencereyi genişletmesin, sığmayan kısım kırpılsın
+        self._status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._pixel = QLabel()
         self._pixel.setObjectName("hint")
         status.addWidget(self._status, 1)
         status.addWidget(self._pixel)
-        layout.addLayout(status)
+        layout.addWidget(self._status_row)
 
         bus = self.ctx.bus
         bus.screenshot_ready.connect(self._on_screenshot)
@@ -384,7 +390,12 @@ class ScreenView(DockView):
         self.ctx.grabber.live_changed.connect(self._on_live_changed)
         self._failed = False
         self._on_selection(None)
-        self._on_live_changed(False)
+        # Yakala/Durdur yazısı değişince araç çubuğu (ve ayrık pencere) genişlemesin
+        widths = []
+        for live in (True, False):
+            self._on_live_changed(live)
+            widths.append(self._live_btn.sizeHint().width())
+        self._live_btn.setMinimumWidth(max(widths))
         self._set_clicker(False)
         return w
 
@@ -406,16 +417,26 @@ class ScreenView(DockView):
         line.setStyleSheet("background: #43454a;")
         return line
 
+    def pinned_changed(self, pinned: bool) -> None:
+        # raptiyeli (her zaman üstte) modda yalnızca araç çubuğu ve görüntü kalsın
+        self._test_row.setVisible(not pinned)
+        self._status_row.setVisible(not pinned)
+
     # ---- tıklayıcı modu -------------------------------------------------- #
     def _set_clicker(self, on: bool) -> None:
         if on and not self.ctx.project:
             self._clicker_btn.setChecked(False)
             return
         self._canvas.set_clicker(on)
-        for b in self._nav_buttons:
-            b.setVisible(on)
-        for b in (self._save_btn, self._region_btn, self._loc_btn):
-            b.setVisible(not on)
+        # önce gizle, sonra göster: iki grup bir an birlikte görünürse pencere genişler
+        shown, hidden = self._nav_buttons, [self._save_btn, self._region_btn, self._loc_btn]
+        if not on:
+            shown, hidden = hidden, shown
+            self._pixel.clear()
+        for b in hidden:
+            b.setVisible(False)
+        for b in shown:
+            b.setVisible(True)
         if on:
             if not self.ctx.grabber.is_live:
                 self.ctx.toggle_live_screen()     # sonucu görmek için canlı görüntü

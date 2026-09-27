@@ -17,7 +17,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractButton, QAbstractSpinBox, QComboBox, QDialog, QDialogButtonBox,
                                QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
-                               QScrollArea, QSplitter, QStackedWidget, QTreeWidget, QTreeWidgetItem,
+                               QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTreeWidget, QTreeWidgetItem,
                                QTreeWidgetItemIterator, QVBoxLayout, QWidget)
 
 from . import icons
@@ -33,6 +33,11 @@ _STYLE = """
     QWidget#settings_page { background: #2b2d30; }
     QTreeWidget#settings_tree { background: #2b2d30; }
     QTreeWidget#settings_tree::item { padding: 4px 2px; }
+    QTreeView::indicator { width: 14px; height: 14px; border: 1px solid #6f737a; border-radius: 3px;
+        background: #2b2d30; }
+    QTreeView::indicator:hover { border-color: #9da0a8; }
+    QTreeView::indicator:checked { background: #3574f0; border-color: #3574f0; image: url(%CHECK%); }
+    QTreeView::indicator:indeterminate { background: #3574f0; border-color: #3574f0; image: url(%DASH%); }
     QLabel#settings_crumb { color: #dfe1e5; font-weight: 600; font-size: 14px; }
     QLabel#settings_section { color: #dfe1e5; }
     QFrame#settings_line { background: #393b40; max-height: 1px; min-height: 1px; border: none; }
@@ -44,6 +49,7 @@ def hint(text: str) -> QLabel:
     label = QLabel(text)
     label.setObjectName("hint")
     label.setWordWrap(True)
+    label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)   # form genişliğince satır kaydır
     return label
 
 
@@ -57,7 +63,8 @@ class GroupedSettingsDialog(QDialog):
         self.setWindowTitle(title)
         self.resize(880, 620)
         self.setMinimumSize(640, 420)
-        self.setStyleSheet(_STYLE)
+        self.setStyleSheet(_STYLE.replace("%CHECK%", icons.icon_file("check", "#ffffff"))
+                           .replace("%DASH%", icons.icon_file("minimize", "#ffffff")))
         self._items: Dict[Tuple[str, ...], QTreeWidgetItem] = {}
 
         # sol: arama + ağaç
@@ -127,6 +134,7 @@ class GroupedSettingsDialog(QDialog):
         pl.setContentsMargins(0, 0, 12, 12)
         pl.setSpacing(4)
         keywords: List[str] = list(path)
+        fills = False   # dikey genişleyen widget (ör. liste) varsa sayfayı o doldurur
         for i, (title, rows) in enumerate(sections):
             if title:
                 pl.addWidget(self._section_header(title, first=i == 0))
@@ -141,8 +149,10 @@ class GroupedSettingsDialog(QDialog):
                 form.addRow(f"{label}:" if label else "", widget)
                 keywords.append(label)
                 keywords.extend(self._widget_texts(widget))
-            pl.addLayout(form)
-        pl.addStretch(1)
+                fills |= widget.sizePolicy().verticalPolicy() in (QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
+            pl.addLayout(form, 1 if fills else 0)
+        if not fills:
+            pl.addStretch(1)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -199,6 +209,11 @@ class GroupedSettingsDialog(QDialog):
                 texts.append(w.text())
             elif isinstance(w, QComboBox):
                 texts.extend(w.itemText(i) for i in range(w.count()))
+            elif isinstance(w, QTreeWidget):
+                it = QTreeWidgetItemIterator(w)
+                while it.value():
+                    texts.append(it.value().text(0))
+                    it += 1
             if w.toolTip():
                 texts.append(w.toolTip())
         return texts
@@ -265,6 +280,8 @@ class GroupedSettingsDialog(QDialog):
                 w.currentIndexChanged.connect(mark)
             elif isinstance(w, QAbstractButton) and w.isCheckable():
                 w.toggled.connect(mark)
+            elif isinstance(w, QTreeWidget) and w.objectName() != "settings_tree":
+                w.itemChanged.connect(mark)   # işaretlenebilir öğeler
 
     def apply(self) -> None:
         """Alt sınıf: penceredeki değerleri hedef yapılandırmaya yazar."""

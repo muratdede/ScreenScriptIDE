@@ -169,7 +169,7 @@ class Region:
     # ---- eylemler -------------------------------------------------------- #
     def click(self, target: Target = None, timeout: Optional[float] = None) -> Location:
         loc = self._resolve(target, timeout)
-        log.info("click %s", loc)
+        log.debug("click %s", loc)
         self._engine.tap(loc)
         return loc
 

@@ -13,10 +13,13 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog
 from ..core import app_settings
 from ..core.app_settings import AppConfig
 from ..core.project import Project, ProjectConfig
+from .inspections_panel import InspectionsPanel
 from .settings_dialog import GroupedSettingsDialog, hint
 
 
 class ProjectSettingsDialog(GroupedSettingsDialog):
+    LOG_LEVELS = [("DEBUG", "DEBUG — her şey (arama skorları, adb komutları)"), ("INFO", "INFO — varsayılan"),
+                  ("WARNING", "WARNING — sadece uyarı ve hatalar"), ("ERROR", "ERROR — sadece hatalar")]
     OCR_BACKENDS = [("auto", "Otomatik"), ("rapid", "RapidOCR (isabetli)"), ("windows", "Windows OCR (hızlı)")]
 
     def __init__(self, project: Project, parent=None):
@@ -46,6 +49,10 @@ class ProjectSettingsDialog(GroupedSettingsDialog):
         self.tap_ms.setToolTip("0: anlık dokunuş (input tap). >0: parmak bu kadar basılı kalıp kalkar;\n"
                                "oyun kısa dokunuşları kaçırıyorsa 60-120 ms deneyin.")
         self.save_on_fail = QCheckBox("Bulunamayınca ekranı debug/ klasörüne kaydet", checked=c.save_on_fail)
+        self.log_level = QComboBox()
+        for value, label in self.LOG_LEVELS:
+            self.log_level.addItem(label, value)
+        self.log_level.setCurrentIndex(max(0, self.log_level.findData(str(c.log_level).upper())))
         self.image_dirs = QLineEdit(", ".join(c.image_dirs))
         self.args = QPlainTextEdit("\n".join(f"{k}={v}" for k, v in c.script_args.items()))
         self.args.setPlaceholderText("anahtar=değer (her satıra bir tane) — script'te ARGS['anahtar']")
@@ -71,7 +78,10 @@ class ProjectSettingsDialog(GroupedSettingsDialog):
         self.add_page(("Çalıştırma", "Script Argümanları"), [
             ("ARGS", [("Argümanlar", self.args)])])
         self.add_page(("Çalıştırma", "Hata Ayıklama"), [
-            ("Başarısız arama", [("", self.save_on_fail)])])
+            ("Başarısız arama", [("", self.save_on_fail)]),
+            ("Konsol", [("Log seviyesi", self.log_level),
+                        ("", hint("Script çalışırken konsola yazılan log mesajlarının en düşük seviyesi. "
+                                  "log() INFO seviyesindedir; WARNING seçilirse görünmez."))])])
         self.finish()
 
     @staticmethod
@@ -103,6 +113,7 @@ class ProjectSettingsDialog(GroupedSettingsDialog):
         c.humanize = self.humanize.isChecked()
         c.tap_ms = self.tap_ms.value()
         c.save_on_fail = self.save_on_fail.isChecked()
+        c.log_level = self.log_level.currentData()
         c.image_dirs = [d.strip() for d in self.image_dirs.text().split(",") if d.strip()] or ["images"]
         args = {}
         for line in self.args.toPlainText().splitlines():
@@ -174,6 +185,9 @@ class AppSettingsDialog(GroupedSettingsDialog):
             ("Bot", [("Bot token", self.tg_token), ("Kullanıcı adı", self.tg_user), ("", self.tg_commands)]),
             ("Deneme", [("", test_row)]),
             ("", [("", hint("Script'lerde push_notification() bu ayarlarla gönderilir."))])])
+        self.inspections = InspectionsPanel(c.disabled_warnings)
+        self.add_page(("Editör", "Denetimler"), [
+            ("Uyarılar", [("", self.inspections)])])
         self.add_page(("Sistem", "Ayar Klasörü"), [
             ("Konum", [("", folder_row),
                        ("", hint("IDE durumu (ide.ini), uygulama ayarları (settings.json), Telegram önbelleği "
@@ -198,7 +212,8 @@ class AppSettingsDialog(GroupedSettingsDialog):
             background=self.background.isChecked(),
             telegram_token=self.tg_token.text().strip(),
             telegram_username=self.tg_user.text().strip(),
-            telegram_commands=self.tg_commands.isChecked())
+            telegram_commands=self.tg_commands.isChecked(),
+            disabled_warnings=self.inspections.disabled_codes())
 
     def _send_test(self) -> None:
         cfg = self.result_config()

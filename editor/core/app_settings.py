@@ -20,7 +20,7 @@ import json
 import logging
 import os
 import shutil
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from typing import List, Optional
 
 log = logging.getLogger(__name__)
@@ -64,6 +64,9 @@ class AppConfig:
     telegram_token: str = ""
     telegram_username: str = ""
     telegram_commands: bool = True     # editör açıkken bota gelen /capture gibi komutları yanıtla
+
+    # kod denetimi: kapatılmış uyarı kodları (diagnostics.WARNING_TYPES); hatalar kapatılamaz
+    disabled_warnings: List[str] = field(default_factory=list)
 
     FILE = "settings.json"
 

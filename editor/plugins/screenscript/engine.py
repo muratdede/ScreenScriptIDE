@@ -125,7 +125,7 @@ class Engine:
         ms = int((time.time() % 1) * 1000)
         path = os.path.join(self.settings.debug_dir, f"{time.strftime('%Y%m%d_%H%M%S')}_{ms:03d}_{safe}.png")
         cv2.imwrite(path, canvas)
-        log.info("Debug görüntüsü: %s", path)
+        log.debug("Debug görüntüsü: %s", path)
         return path
 
     # ---- girdi ----------------------------------------------------------- #
