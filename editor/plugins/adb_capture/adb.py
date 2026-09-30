@@ -1,4 +1,4 @@
-"""ADB access: locating adb.exe and sending commands to a device (BlueStacks)."""
+"""ADB access: locating adb.exe and sending commands to a device (an Android emulator)."""
 
 from __future__ import annotations
 
@@ -19,10 +19,21 @@ class AdbError(RuntimeError):
 
 
 class AdbLocator:
-    """Finds the adb executable: given path -> PATH -> BlueStacks' HD-Adb.exe."""
+    """Finds the adb executable: given path -> PATH -> Android SDK platform-tools -> the adb bundled
+    with a known emulator (LDPlayer, BlueStacks).
 
-    _REG_KEYS = (r"SOFTWARE\BlueStacks_nxt", r"SOFTWARE\BlueStacks")
-    _FOLDERS = ("BlueStacks_nxt", "BlueStacks")
+    Any adb works with any emulator; a standalone one (PATH / platform-tools) is preferred. Different
+    adb versions restart each other's server, so it is best to use a single adb consistently."""
+
+    # emulator -> (registry keys holding an install dir, install dirs relative to drive roots /
+    # Program Files, adb file name inside the install dir)
+    _EMULATORS = (
+        ("LDPlayer", (r"SOFTWARE\leidian\ldplayer9", r"SOFTWARE\leidian\ldplayer"),
+         (r"LDPlayer\LDPlayer9", r"LDPlayer\LDPlayer4.0"), "adb.exe"),
+        ("BlueStacks", (r"SOFTWARE\BlueStacks_nxt", r"SOFTWARE\BlueStacks"),
+         ("BlueStacks_nxt", "BlueStacks"), "HD-Adb.exe"),
+    )
+    _REG_VALUES = ("InstallDir", "InstallPath")
 
     @classmethod
     def locate(cls, user_path: Optional[str] = None) -> str:
@@ -35,33 +46,49 @@ class AdbLocator:
         if found:
             return found
 
-        for candidate in cls._bluestacks_candidates():
+        for candidate in cls._candidates():
             if os.path.isfile(candidate):
                 return candidate
 
         raise AdbError(tr(
             "adb not found. Install Android platform-tools or give a path like "
-            "{example} as adb_path.", example=r'"C:\Program Files\BlueStacks_nxt\HD-Adb.exe"'))
+            "{example} as adb_path.", example=r'"C:\LDPlayer\LDPlayer9\adb.exe"'))
 
     @classmethod
-    def _bluestacks_candidates(cls):
+    def _candidates(cls):
         if not sys.platform.startswith("win"):
             return
+        sdk = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") or \
+            os.path.join(os.environ.get("LOCALAPPDATA", ""), "Android", "Sdk")
+        yield os.path.join(sdk, "platform-tools", "adb.exe")
+
+        bases = [os.environ.get("ProgramFiles", r"C:\Program Files"),
+                 os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")]
+        bases += [f"{d}:\\" for d in "CDE"]
+        for _name, reg_keys, folders, exe in cls._EMULATORS:
+            for install_dir in cls._registry_dirs(reg_keys):
+                yield os.path.join(install_dir, exe)
+            for base in bases:
+                for folder in folders:
+                    yield os.path.join(base, folder, exe)
+
+    @classmethod
+    def _registry_dirs(cls, keys):
         try:
             import winreg
-
-            for key in cls._REG_KEYS:
+        except ImportError:
+            return
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            for key in keys:
                 try:
-                    with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
-                        yield os.path.join(winreg.QueryValueEx(k, "InstallDir")[0], "HD-Adb.exe")
+                    with winreg.OpenKey(hive, key) as k:
+                        for value in cls._REG_VALUES:
+                            try:
+                                yield winreg.QueryValueEx(k, value)[0]
+                            except OSError:
+                                continue
                 except OSError:
                     continue
-        except ImportError:
-            pass
-        for base in (os.environ.get("ProgramFiles", r"C:\Program Files"),
-                     os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")):
-            for folder in cls._FOLDERS:
-                yield os.path.join(base, folder, "HD-Adb.exe")
 
 
 class AdbDevice:
@@ -92,7 +119,8 @@ class AdbDevice:
         if "connected" not in out.lower() or "cannot" in out.lower() or "failed" in out.lower():
             raise AdbError(tr("ADB could not connect ({serial}): {output}", serial=self._serial, output=out.strip()))
         if not self.is_connected():
-            raise AdbError(tr("Device is not ready ({serial}). Is ADB enabled in BlueStacks?", serial=self._serial))
+            raise AdbError(tr("Device is not ready ({serial}). Is ADB enabled in the emulator settings?",
+                              serial=self._serial))
         log.info(tr("ADB connected: %s (%s)"), self._serial, self._adb)
 
     def disconnect(self) -> None:

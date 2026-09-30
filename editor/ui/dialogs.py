@@ -148,7 +148,7 @@ class AppSettingsDialog(GroupedSettingsDialog):
         self.host = QLineEdit(c.host)
         self.port = QSpinBox(minimum=1, maximum=65535, value=int(c.port))
         self.adb = QLineEdit(c.adb_path)
-        self.adb.setPlaceholderText(tr("Empty = find automatically (PATH / BlueStacks HD-Adb.exe)"))
+        self.adb.setPlaceholderText(tr("Empty = find automatically (PATH / platform-tools / LDPlayer / BlueStacks)"))
         adb_row = ProjectSettingsDialog._with_button(self.adb, tr("Browse…"), self._browse_adb)
         self.fmt = QComboBox()
         self.fmt.addItem(tr("stream — H.264 stream (fast, ~35 FPS)"), "stream")
@@ -212,8 +212,8 @@ class AppSettingsDialog(GroupedSettingsDialog):
         self.finish()
 
     def _browse_adb(self):
-        path, _ = QFileDialog.getOpenFileName(self, tr("Select adb"), r"C:\Program Files\BlueStacks_nxt"
-                                              if os.name == "nt" else "", tr("adb (adb* HD-Adb*);;All (*)"))
+        start = os.path.dirname(self.adb.text()) if self.adb.text() else ""
+        path, _ = QFileDialog.getOpenFileName(self, tr("Select adb"), start, tr("adb (adb* HD-Adb*);;All (*)"))
         if path:
             self.adb.setText(path)
 
