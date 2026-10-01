@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from abc import ABC, abstractmethod
 
 import numpy as np
 
 from ...i18n import tr
-from ..adb_capture import FrameSource, LatestFrameBuffer, PeriodicCapturer
+from ..adb_capture import CaptureError, FrameSource, LatestFrameBuffer, PeriodicCapturer
+
+log = logging.getLogger(__name__)
 
 
 class ImageProvider(ABC):
@@ -23,7 +27,14 @@ class ImageProvider(ABC):
 
 
 class OnDemandProvider(ImageProvider):
-    """Grabs a frame directly from the source on every request. Simple and always up to date."""
+    """Grabs a frame directly from the source on every request. Simple and always up to date.
+
+    A failed grab (e.g. an adb timeout while the emulator is busy) is retried after
+    source.recover(); the error reaches the script only when every attempt fails. A single
+    hiccup must not end a script that has been running for hours."""
+
+    RETRIES = 2
+    RETRY_DELAY = 1.0
 
     def __init__(self, source: FrameSource):
         self._source = source
@@ -35,7 +46,18 @@ class OnDemandProvider(ImageProvider):
         self._source.close()
 
     def snapshot(self, fresh=True):
-        return self._source.grab()
+        for attempt in range(self.RETRIES + 1):
+            try:
+                return self._source.grab()
+            except CaptureError as e:
+                if attempt == self.RETRIES:
+                    raise
+                log.warning(tr("Capture error (%d/%d): %s"), attempt + 1, self.RETRIES + 1, e)
+            time.sleep(self.RETRY_DELAY)
+            try:
+                self._source.recover()
+            except Exception as e:  # noqa: BLE001 — the next grab attempt reports the real error
+                log.warning(tr("Recovery failed: %s"), e)
 
 
 class BackgroundProvider(ImageProvider):
