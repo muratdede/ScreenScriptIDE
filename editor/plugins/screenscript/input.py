@@ -72,6 +72,49 @@ class AdbInputDriver(InputDriver):
         self._device.shell(f"input keyevent {int(keycode)}")
 
 
+class PacedInputDriver(InputDriver):
+    """Wraps another driver (Decorator): makes the timing of inputs less machine-like.
+
+    - gap_range (s): before every input it waits until a random gap from this range has passed
+      since the previous input finished; if the script was busy longer, it does not wait for this.
+      Games can drop some of several taps sent back to back within a few milliseconds (e.g.
+      activating all copies of a module).
+    - jitter (s): every input is additionally delayed by a random 0..jitter, so even an input
+      repeated at a fixed interval (e.g. every second) never lands at an exactly regular rhythm."""
+
+    def __init__(self, inner: InputDriver, gap_range=(0.025, 0.075), jitter: float = 0.010):
+        self._inner = inner
+        low, high = sorted(max(0.0, float(v)) for v in gap_range)
+        self._gap = (low, high)
+        self._jitter = max(0.0, float(jitter))
+        self._last_end = 0.0
+
+    def tap(self, loc):
+        self._paced(self._inner.tap, loc)
+
+    def swipe(self, start, end, duration_ms=300):
+        self._paced(self._inner.swipe, start, end, duration_ms)
+
+    def long_press(self, loc, duration_ms=800):
+        self._paced(self._inner.long_press, loc, duration_ms)
+
+    def type_text(self, text):
+        self._paced(self._inner.type_text, text)
+
+    def key(self, keycode):
+        self._paced(self._inner.key, keycode)
+
+    def _paced(self, action, *args):
+        wait = max(0.0, random.uniform(*self._gap) - (time.monotonic() - self._last_end))
+        wait += random.uniform(0.0, self._jitter)
+        if wait > 0:
+            time.sleep(wait)
+        try:
+            action(*args)
+        finally:
+            self._last_end = time.monotonic()
+
+
 class HumanizedInputDriver(InputDriver):
     """Wraps another driver (Decorator): adds a small coordinate jitter and a random delay."""
 

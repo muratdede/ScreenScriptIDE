@@ -3,7 +3,7 @@
 from .engine import Engine, SearchResult
 from .errors import FindFailed, ImageNotFound, NotificationError, ScriptError, TextNotFound
 from .geometry import Location, Rect
-from .input import (AdbInputDriver, HumanizedInputDriver, InputDriver, Key)
+from .input import (AdbInputDriver, HumanizedInputDriver, InputDriver, Key, PacedInputDriver)
 from .matching import Matcher, MatchResult, MultiScaleMatcher, TemplateMatcher
 from .notify import Notifier, NullNotifier, TelegramNotifier
 from .ocr import (OcrUnavailable, RapidOcrReader, ScaledReader, TextReader, TextResult,
@@ -18,7 +18,7 @@ __all__ = [
     "Engine", "SearchResult", "FindFailed", "ImageNotFound", "ScriptError", "NotificationError",
     "Notifier", "NullNotifier", "TelegramNotifier",
     "Location", "Rect", "InputDriver", "AdbInputDriver",
-    "HumanizedInputDriver", "Key", "Matcher", "MatchResult", "TemplateMatcher",
+    "HumanizedInputDriver", "PacedInputDriver", "Key", "Matcher", "MatchResult", "TemplateMatcher",
     "MultiScaleMatcher", "Pattern", "ImagePath", "ImageLibrary", "ImageProvider",
     "OnDemandProvider", "BackgroundProvider", "Region", "Match", "Screen",
     "ContextBuilder", "ScriptContext", "ScriptRunner", "Settings",

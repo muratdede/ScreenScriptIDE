@@ -51,6 +51,15 @@ class ProjectSettingsDialog(GroupedSettingsDialog):
         self.tap_ms = QSpinBox(minimum=0, maximum=1000, singleStep=10, value=int(c.tap_ms), suffix=" ms")
         self.tap_ms.setToolTip(tr("0: instant tap (input tap). >0: the finger stays down this long, then lifts;\n"
                                   "try 60-120 ms if the game misses short taps."))
+        self.gap_min = QSpinBox(minimum=0, maximum=2000, singleStep=5, value=int(c.input_gap_min_ms), suffix=" ms")
+        self.gap_max = QSpinBox(minimum=0, maximum=2000, singleStep=5, value=int(c.input_gap_max_ms), suffix=" ms")
+        gap_tip = tr("Before each tap/swipe/key, at least a random time in this range has passed since the "
+                     "previous input.\nGames can drop taps sent back to back. 0 - 0: off.")
+        self.gap_min.setToolTip(gap_tip)
+        self.gap_max.setToolTip(gap_tip)
+        self.jitter = QSpinBox(minimum=0, maximum=500, value=int(c.input_jitter_ms), suffix=" ms")
+        self.jitter.setToolTip(tr("Every input is delayed by a random 0 - this value, so repeated inputs "
+                                  "do not follow an exact rhythm. 0: off."))
         self.save_on_fail = QCheckBox(tr("Save the screen to the debug/ folder when not found"), checked=c.save_on_fail)
         self.log_level = QComboBox()
         for value, label in self.LOG_LEVELS:
@@ -78,7 +87,9 @@ class ProjectSettingsDialog(GroupedSettingsDialog):
                      ("", hint(tr("Used for read_text / find_text. Automatic: RapidOCR if installed, "
                                   "otherwise Windows OCR.")))])])
         self.add_page((tr("Running"), tr("Input")), [
-            (tr("Tap"), [("", self.humanize), (tr("Tap duration"), self.tap_ms)])])
+            (tr("Tap"), [("", self.humanize), (tr("Tap duration"), self.tap_ms)]),
+            (tr("Gap between inputs"), [(tr("Minimum"), self.gap_min), (tr("Maximum"), self.gap_max),
+                                        (tr("Random delay per input (up to)"), self.jitter)])])
         self.add_page((tr("Running"), tr("Script Arguments")), [
             ("ARGS", [(tr("Arguments"), self.args)])])
         self.add_page((tr("Running"), tr("Debugging")), [
@@ -117,6 +128,8 @@ class ProjectSettingsDialog(GroupedSettingsDialog):
         c.main_script = self.main_script.text().strip()
         c.humanize = self.humanize.isChecked()
         c.tap_ms = self.tap_ms.value()
+        c.input_gap_min_ms, c.input_gap_max_ms = sorted((self.gap_min.value(), self.gap_max.value()))
+        c.input_jitter_ms = self.jitter.value()
         c.save_on_fail = self.save_on_fail.isChecked()
         c.log_level = self.log_level.currentData()
         c.image_dirs = [d.strip() for d in self.image_dirs.text().split(",") if d.strip()] or ["images"]

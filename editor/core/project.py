@@ -40,6 +40,9 @@ class ProjectConfig:
     grayscale: bool = False
     humanize: bool = False
     tap_ms: int = 0                  # how long a tap is held down (ms); 0 = instant "input tap"
+    input_gap_min_ms: int = 25       # random minimum gap between consecutive inputs (ms); 0-0 = off
+    input_gap_max_ms: int = 75
+    input_jitter_ms: int = 10        # every input is delayed by a random 0..this (ms); 0 = off
     save_on_fail: bool = True
     log_level: str = "INFO"          # log level of the script output: DEBUG, INFO, WARNING, ERROR
     ocr: str = "auto"                # text recognition engine: auto, rapid, windows
