@@ -63,6 +63,7 @@ class EditorContext(QObject):
         # every component saving/deleting images emits images_changed -> the repository refreshes immediately
         self.bus.images_changed.connect(lambda: self.images.refresh())
         self.telegram.message.connect(self.bus.status_message)
+        self.bus.output.connect(self.telegram.record_output)   # /console sends the last lines
         self.bus.app_config_changed.connect(self.telegram.apply_config)
         self.telegram.apply_config(self.app_config)
 

@@ -1,6 +1,7 @@
 """Telegram bot commands: answers commands sent to the bot in a background thread while the editor is open.
 
     /capture  — sends the device's current screenshot as a photo
+    /console  — sends the last lines of the console (/console 50: the last 50)
     /help     — command list
 
 Only the user from the settings (telegram_username; @name or numeric chat_id) gets answers; messages
@@ -15,7 +16,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Optional, Tuple
+from collections import deque
+from typing import List, Optional, Tuple
 
 import cv2
 from PySide6.QtCore import QObject, Signal
@@ -35,6 +37,8 @@ class TelegramCommandService(QObject):
     POLL_TIMEOUT = 25        # long polling duration (s)
     STALE_SECONDS = 60       # old commands that arrived while the editor was closed are not answered
     MAX_BACKOFF = 30
+    CONSOLE_LINES = 20       # lines sent by /console without a number
+    CONSOLE_MAX_LINES = 200  # console lines kept in memory (upper limit of /console N)
 
     def __init__(self, grabber: ScreenGrabber, parent=None):
         super().__init__(parent)
@@ -42,12 +46,33 @@ class TelegramCommandService(QObject):
         self._config: Optional[AppConfig] = None
         self._key: Optional[Tuple] = None
         self._stop: Optional[threading.Event] = None
+        self._console: deque = deque(maxlen=self.CONSOLE_MAX_LINES)
+        self._console_partial = ""            # last line that has no newline yet
+        self._console_lock = threading.Lock()
 
     @staticmethod
     def help_text() -> str:
         return tr("ScreenScript IDE commands:\n"
                   "/capture — sends a screenshot of the device screen\n"
+                  "/console — sends the last 20 lines of the console (/console 50: the last 50)\n"
                   "/help — this message")
+
+    # ---- console --------------------------------------------------------- #
+    def record_output(self, text: str, kind: str = "out") -> None:
+        """bus.output slot: keeps the last console lines for /console (called on the UI thread;
+        the command thread reads them)."""
+        with self._console_lock:
+            parts = (self._console_partial + text).replace("\r\n", "\n").split("\n")
+            self._console_partial = parts.pop()
+            self._console.extend(parts)
+
+    def console_tail(self, count: int) -> List[str]:
+        """The last `count` console lines (including a line still being written)."""
+        with self._console_lock:
+            lines = list(self._console)
+            if self._console_partial:
+                lines.append(self._console_partial)
+        return lines[-count:] if count > 0 else []
 
     @property
     def running(self) -> bool:
@@ -119,10 +144,13 @@ class TelegramCommandService(QObject):
         if time.time() - msg.get("date", 0) > self.STALE_SECONDS:
             return
 
-        command = text.split()[0].split("@")[0].lower()
+        words = text.split()
+        command = words[0].split("@")[0].lower()
         reply = TelegramNotifier(token, str(chat_id))
         if command == "/capture":
             self._send_capture(reply)
+        elif command == "/console":
+            self._send_console(reply, words[1] if len(words) > 1 else "")
         else:
             reply.send_text(self.help_text())
 
@@ -131,6 +159,16 @@ class TelegramCommandService(QObject):
         if user.lstrip("-").isdigit():
             return chat.get("id") == int(user)
         return (sender.get("username") or "").lower() == user.lower()
+
+    def _send_console(self, reply: TelegramNotifier, arg: str) -> None:
+        count = int(arg) if arg.isdigit() else self.CONSOLE_LINES
+        count = max(1, min(count, self.CONSOLE_MAX_LINES))
+        lines = self.console_tail(count)
+        if not any(line.strip() for line in lines):
+            reply.send_text(tr("The console is empty."))
+        else:
+            reply.send_text("\n".join(lines))
+        self.message.emit(tr("Telegram /console: last {count} lines sent", count=len(lines)))
 
     def _send_capture(self, reply: TelegramNotifier) -> None:
         config = self._config
