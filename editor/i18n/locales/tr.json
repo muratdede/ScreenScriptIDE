@@ -342,6 +342,7 @@
   "Open project": "Projeyi aç",
   "Open Project…": "Proje Aç…",
   "Open screenshot": "Ekran görüntüsü aç",
+  "onnxruntime spinning could not be turned off: %s": "onnxruntime iş parçacığı beklemesi (spinning) kapatılamadı: %s",
   "open() must be called first": "Önce open() çağrılmalı",
   "Panels": "Paneller",
   "Parameter Info": "Parametre Bilgisi",
