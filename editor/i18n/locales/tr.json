@@ -328,6 +328,7 @@
   "Notifications": "Bildirimler",
   "Notifications are not configured: enter the Telegram bot token and username in the settings": "Bildirim yapılandırılmamış: ayarlarda Telegram bot token'ı ve kullanıcı adını girin",
   "NotImplemented is not an exception; use NotImplementedError.": "NotImplemented bir istisna değildir; NotImplementedError kullanın.",
+  "OCR runs on the GPU (%s)": "OCR GPU'da çalışıyor (%s)",
   "OK": "Tamam",
   "One of the script API names like click, find is redefined.": "click, find gibi script API isimlerinden biri yeniden tanımlanıyor.",
   "Only TM_CCOEFF_NORMED and TM_CCORR_NORMED are supported": "Sadece TM_CCOEFF_NORMED ve TM_CCORR_NORMED desteklenir",
