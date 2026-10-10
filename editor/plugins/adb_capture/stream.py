@@ -45,6 +45,8 @@ from .sources import AdbScreencapSource, CaptureError, FrameSource, ScreencapFor
 
 log = logging.getLogger(__name__)
 
+DECODER_THREADS = 1   # see _StreamSession._decode
+
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -169,7 +171,13 @@ class _StreamSession:
     def _decode(self, port: int) -> None:
         cap = None
         try:
-            cap = cv2.VideoCapture(f"tcp://127.0.0.1:{port}", cv2.CAP_FFMPEG)
+            # One decoder thread: by default OpenCV gives FFmpeg one thread per core (max 16) and
+            # H.264 frame threading holds one frame per thread, so every frame came out ~16 frames
+            # (~535 ms) after it arrived. With one thread it is ~37 ms, and one core still keeps
+            # up with 1080p at 30 fps (measured). FFmpeg's own "threads" option is overridden by
+            # OpenCV, so it is set through the OpenCV property.
+            cap = cv2.VideoCapture(f"tcp://127.0.0.1:{port}", cv2.CAP_FFMPEG,
+                                   [cv2.CAP_PROP_N_THREADS, DECODER_THREADS])
             if not cap.isOpened():
                 raise CaptureError(tr("H.264 stream could not be opened"))
             while self.alive:
