@@ -106,9 +106,10 @@ class RapidOcrReader(TextReader):
         "EngineConfig.onnxruntime.intra_op_num_threads": min(8, os.cpu_count() or 4),
     }
 
-    def __init__(self, params: Optional[dict] = None, min_score: float = 0.5):
+    def __init__(self, params: Optional[dict] = None, min_score: float = 0.5, gpu: bool = True):
         self._params = {**self.DEFAULT_PARAMS, **(params or {})}
         self._min_score = min_score
+        self._gpu = gpu
         self._engine = None
         self._lock = threading.Lock()
 
@@ -123,7 +124,11 @@ class RapidOcrReader(TextReader):
                 _disable_ort_spinning()
             except (ImportError, AttributeError) as e:   # a RapidOCR version with another layout
                 log.debug(tr("onnxruntime spinning could not be turned off: %s"), e)
-            params = {**_gpu_params(onnxruntime.get_available_providers()), **self._params}
+            if self._gpu:
+                params = {**_gpu_params(onnxruntime.get_available_providers()), **self._params}
+            else:
+                log.debug(tr("OCR runs on the CPU (GPU turned off in the settings)"))
+                params = self._params
             self._engine = RapidOCR(params=params)
         return self._engine
 
@@ -267,14 +272,15 @@ def available_backends() -> List[str]:
     return found
 
 
-def create_text_reader(backend: str = "auto") -> TextReader:
+def create_text_reader(backend: str = "auto", gpu: bool = True) -> TextReader:
     """backend: "auto" (the most accurate of the installed ones), "rapid" or "windows".
+    gpu: RapidOCR may use the GPU if the installed onnxruntime build supports it.
     Packages are checked without importing; the engine is loaded on the first read."""
     if backend == "auto":
         found = available_backends()
         backend = found[0] if found else "none"
     if backend == "rapid":
-        return RapidOcrReader()
+        return RapidOcrReader(gpu=gpu)
     if backend == "windows":
         return ScaledReader(WindowsOcrReader(), scale=2.0)
     if backend == "none":

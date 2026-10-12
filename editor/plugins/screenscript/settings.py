@@ -12,3 +12,4 @@ class Settings:
     debug_dir: str = "debug"         # folder where highlight() images are saved
     save_on_fail: bool = False       # save the screen to debug_dir on FindFailed
     ocr_backend: str = "auto"        # text recognition engine: auto, rapid, windows
+    ocr_gpu: bool = True             # RapidOCR uses the GPU (DirectML / CUDA) when the onnxruntime build has it

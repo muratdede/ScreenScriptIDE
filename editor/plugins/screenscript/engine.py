@@ -40,12 +40,14 @@ class Engine:
         self.input = input_driver
         self.library = library
         self.settings = settings or Settings()
-        self.text_reader = text_reader or create_text_reader(self.settings.ocr_backend)
+        self.text_reader = text_reader or create_text_reader(self.settings.ocr_backend, self.settings.ocr_gpu)
         self._last_image: Optional[np.ndarray] = None
+        self.last_grab_time = 0.0    # time.monotonic() of the last grab (the freeze watchdog reads it)
 
     # ---- screen ---------------------------------------------------------- #
     def grab(self, fresh: bool = True) -> np.ndarray:
         self._last_image = self.provider.snapshot(fresh)
+        self.last_grab_time = time.monotonic()
         return self._last_image
 
     @property

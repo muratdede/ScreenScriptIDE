@@ -608,5 +608,19 @@
   "{total} matches in {files} files will be replaced with “{text}”. Continue?": "{files} dosyada {total} eşleşme “{text}” ile değiştirilecek. Devam edilsin mi?",
   "{total} references updated in {files} files": "{files} dosyada {total} referans güncellendi",
   "“{name}” already exists.": "“{name}” zaten var.",
-  "■ Finished (exit code {code})\n\n": "■ Bitti (çıkış kodu {code})\n\n"
+  "■ Finished (exit code {code})\n\n": "■ Bitti (çıkış kodu {code})\n\n",
+  "A Telegram message with the last screen is sent when the screen has not changed for this long although the script kept looking at it, or when the emulator does not answer an adb command. Another message follows when the screen moves again.": "Script ekrana bakmaya devam ettiği hâlde ekran bu kadar süre hiç değişmezse ya da emülatör bir adb komutuna yanıt vermezse son ekran görüntüsüyle bir Telegram mesajı gönderilir. Ekran yeniden hareket edince bir mesaj daha gelir.",
+  "Faster and uses less CPU. Turn it off if the emulator freezes while a script runs: the emulator renders on the same GPU. Applies to scripts started afterwards.": "Daha hızlıdır ve daha az CPU kullanır. Script çalışırken emülatör donuyorsa kapatın: emülatör de aynı GPU'da çiziyor. Sonradan başlatılan scriptlerde geçerli olur.",
+  "Freeze alert": "Donma uyarısı",
+  "Freeze check failed": "Donma kontrolü başarısız oldu",
+  "Freeze notification could not be sent: %s": "Donma bildirimi gönderilemedi: %s",
+  "Notify when the emulator screen freezes while a script runs": "Script çalışırken emülatör ekranı donarsa bildir",
+  "OCR runs on the CPU (GPU turned off in the settings)": "OCR CPU'da çalışıyor (GPU ayarlardan kapalı)",
+  "Run RapidOCR on the GPU when available (DirectML / CUDA)": "RapidOCR'ı mümkünse GPU'da çalıştır (DirectML / CUDA)",
+  "Screen Freeze": "Ekran Donması",
+  "The emulator did not answer an adb command in time ({command}); it may have frozen.": "Emülatör bir adb komutuna zamanında yanıt vermedi ({command}); donmuş olabilir.",
+  "The emulator screen has not changed for {seconds} s; it may have frozen.": "Emülatör ekranı {seconds} sn'dir değişmedi; donmuş olabilir.",
+  "The emulator screen is moving again.": "Emülatör ekranı yeniden hareket ediyor.",
+  "Unchanged screen for": "Ekran değişmeden geçen süre",
+  "adb timeout listener failed": "adb zaman aşımı dinleyicisi hata verdi"
 }

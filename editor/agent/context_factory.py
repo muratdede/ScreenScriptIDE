@@ -31,7 +31,8 @@ class ContextFactory:
     def create_settings(self) -> Settings:
         c = self._project.config
         return Settings(min_similarity=c.similarity, auto_wait_timeout=c.timeout,
-                        scan_rate=c.scan_rate, save_on_fail=c.save_on_fail, ocr_backend=c.ocr)
+                        scan_rate=c.scan_rate, save_on_fail=c.save_on_fail, ocr_backend=c.ocr,
+                        ocr_gpu=self._app.ocr_gpu)
 
     def create_builder(self) -> ContextBuilder:
         c, app = self._project.config, self._app
@@ -39,6 +40,7 @@ class ContextFactory:
                               screencap_format=ScreencapFormat(app.screencap_format),
                               background=app.background,
                               tap_ms=int(c.tap_ms),
+                              freeze_alert_seconds=float(app.freeze_seconds) if app.freeze_alert else 0.0,
                               settings=self.create_settings(),
                               image_dirs=self._project.image_search_dirs())
 

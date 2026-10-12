@@ -7,7 +7,7 @@ import os
 import shutil
 import subprocess
 import sys
-from typing import Optional
+from typing import Callable, List, Optional
 
 from ...i18n import tr
 
@@ -16,6 +16,28 @@ log = logging.getLogger(__name__)
 
 class AdbError(RuntimeError):
     """All ADB related errors."""
+
+
+# Called with the command text whenever an adb command times out (the device stopped answering).
+# The script process' freeze watchdog listens here.
+_timeout_listeners: List[Callable[[str], None]] = []
+
+
+def add_timeout_listener(listener: Callable[[str], None]) -> None:
+    _timeout_listeners.append(listener)
+
+
+def remove_timeout_listener(listener: Callable[[str], None]) -> None:
+    if listener in _timeout_listeners:
+        _timeout_listeners.remove(listener)
+
+
+def _notify_timeout(command: str) -> None:
+    for listener in list(_timeout_listeners):
+        try:
+            listener(command)
+        except Exception:  # noqa: BLE001 — a listener must never hide the adb error itself
+            log.exception(tr("adb timeout listener failed"))
 
 
 class AdbLocator:
@@ -155,6 +177,7 @@ class AdbDevice:
             res = subprocess.run(cmd, capture_output=True, timeout=self._timeout,
                                  creationflags=self._creationflags)
         except subprocess.TimeoutExpired as e:
+            _notify_timeout(" ".join(args))
             raise AdbError(tr("ADB timeout: {command}", command=" ".join(args))) from e
         except OSError as e:
             raise AdbError(tr("adb could not be run: {error}", error=e)) from e

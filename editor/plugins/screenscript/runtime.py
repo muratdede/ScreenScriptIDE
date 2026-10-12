@@ -30,6 +30,7 @@ from .pattern import ImageLibrary, ImagePath, Pattern
 from .providers import BackgroundProvider, ImageProvider, OnDemandProvider
 from .region import Match, Region, Screen, TextMatch
 from .settings import Settings
+from .watchdog import FreezeWatchdog
 
 log = logging.getLogger("script")
 
@@ -37,19 +38,27 @@ log = logging.getLogger("script")
 class ScriptContext:
     """A script session. Opens/closes resources and provides the API namespace."""
 
-    def __init__(self, engine: Engine, notifier: Optional[Notifier] = None):
+    def __init__(self, engine: Engine, notifier: Optional[Notifier] = None, freeze_alert_seconds: float = 0.0):
         self.engine = engine
         self.notifier: Notifier = notifier or NullNotifier()
         self.screen: Optional[Screen] = None
         self._extra: Dict[str, Any] = {}
+        self._freeze_alert_seconds = freeze_alert_seconds
+        self._watchdog: Optional[FreezeWatchdog] = None
 
     def open(self) -> "ScriptContext":
         self.engine.provider.open()
         self.screen = Screen(self.engine)
         log.info(tr("Screen: %dx%d"), self.screen.w, self.screen.h)
+        if self._freeze_alert_seconds > 0:
+            self._watchdog = FreezeWatchdog(self.engine, self.notifier, self._freeze_alert_seconds)
+            self._watchdog.start()
         return self
 
     def close(self) -> None:
+        if self._watchdog is not None:
+            self._watchdog.stop()
+            self._watchdog = None
         self.engine.provider.close()
 
     def __enter__(self):
@@ -111,6 +120,7 @@ class ContextBuilder:
     background: bool = False
     background_interval: float = 0.3
     tap_ms: int = 0              # >0: taps are held down this many ms (natural touch)
+    freeze_alert_seconds: float = 0.0   # >0: notify when the screen stays unchanged this long (FreezeWatchdog)
     settings: Settings = field(default_factory=Settings)
     image_dirs: list = field(default_factory=list)
 
@@ -178,7 +188,7 @@ class ContextBuilder:
                         library=ImageLibrary(ImagePath(self.image_dirs)),
                         settings=self.settings,
                         text_reader=self._text_reader)
-        return ScriptContext(engine, self._notifier)
+        return ScriptContext(engine, self._notifier, self.freeze_alert_seconds)
 
 
 class ScriptRunner:

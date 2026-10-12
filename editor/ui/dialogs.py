@@ -170,6 +170,7 @@ class AppSettingsDialog(GroupedSettingsDialog):
         self.fmt.setCurrentIndex(max(0, self.fmt.findData(c.screencap_format)))
         self.background = QCheckBox(tr("Capture continuously in the background while a script runs"),
                                     checked=c.background)
+        self.ocr_gpu = QCheckBox(tr("Run RapidOCR on the GPU when available (DirectML / CUDA)"), checked=c.ocr_gpu)
 
         self.tg_token = QLineEdit(c.telegram_token)
         self.tg_token.setEchoMode(QLineEdit.PasswordEchoOnEdit)
@@ -178,6 +179,12 @@ class AppSettingsDialog(GroupedSettingsDialog):
         self.tg_user.setPlaceholderText(tr("@user — the person must have pressed Start in the bot once"))
         self.tg_commands = QCheckBox(tr("Answer bot commands while the editor is open (/capture: send a screenshot)"),
                                      checked=c.telegram_commands)
+        self.freeze_alert = QCheckBox(tr("Notify when the emulator screen freezes while a script runs"),
+                                      checked=c.freeze_alert)
+        self.freeze_seconds = QSpinBox(minimum=10, maximum=3600, singleStep=10, value=int(c.freeze_seconds),
+                                       suffix=" s")
+        self.freeze_seconds.setEnabled(c.freeze_alert)
+        self.freeze_alert.toggled.connect(self.freeze_seconds.setEnabled)
         self._test_btn = QPushButton(tr("Send test message"))
         self._test_btn.clicked.connect(self._send_test)
         self._test_result = QLabel()
@@ -210,10 +217,21 @@ class AppSettingsDialog(GroupedSettingsDialog):
             ("ADB", [(tr("Host"), self.host), (tr("Port"), self.port), (tr("adb path"), adb_row)])])
         self.add_page((tr("Device"), tr("Screen Capture")), [
             (tr("Capturing"), [(tr("Format"), self.fmt), ("", self.background)])])
+        self.add_page((tr("Device"), tr("Text Recognition (OCR)")), [
+            ("OCR", [("", self.ocr_gpu),
+                     ("", hint(tr("Faster and uses less CPU. Turn it off if the emulator freezes while a script "
+                                  "runs: the emulator renders on the same GPU. Applies to scripts started "
+                                  "afterwards.")))])])
         self.add_page((tr("Notifications"), "Telegram"), [
             (tr("Bot"), [(tr("Bot token"), self.tg_token), (tr("Username"), self.tg_user), ("", self.tg_commands)]),
             (tr("Test"), [("", test_row)]),
             ("", [("", hint(tr("push_notification() in scripts is sent with these settings.")))])])
+        self.add_page((tr("Notifications"), tr("Screen Freeze")), [
+            (tr("Freeze alert"), [("", self.freeze_alert), (tr("Unchanged screen for"), self.freeze_seconds),
+                                  ("", hint(tr("A Telegram message with the last screen is sent when the screen "
+                                               "has not changed for this long although the script kept looking "
+                                               "at it, or when the emulator does not answer an adb command. "
+                                               "Another message follows when the screen moves again.")))])])
         self.inspections = InspectionsPanel(c.disabled_warnings)
         self.add_page((tr("Editor"), tr("Inspections")), [
             (tr("Warnings"), [("", self.inspections)])])
@@ -240,9 +258,12 @@ class AppSettingsDialog(GroupedSettingsDialog):
             adb_path=self.adb.text().strip(),
             screencap_format=self.fmt.currentData(),
             background=self.background.isChecked(),
+            ocr_gpu=self.ocr_gpu.isChecked(),
             telegram_token=self.tg_token.text().strip(),
             telegram_username=self.tg_user.text().strip(),
             telegram_commands=self.tg_commands.isChecked(),
+            freeze_alert=self.freeze_alert.isChecked(),
+            freeze_seconds=self.freeze_seconds.value(),
             disabled_warnings=self.inspections.disabled_codes())
 
     def _send_test(self) -> None:

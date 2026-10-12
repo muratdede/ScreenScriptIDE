@@ -64,11 +64,17 @@ class AppConfig:
     screencap_format: str = "stream"   # stream (H.264, fast) | raw | png
     background: bool = False           # capture continuously in the background while a script runs
 
+    # RapidOCR on the GPU (DirectML / CUDA) when the installed onnxruntime build supports it
+    ocr_gpu: bool = True
+
     # push_notification: Telegram bot token (TELEGRAM_BOT_TOKEN environment variable when empty) and
     # the username receiving notifications. The user must have pressed Start in the bot once.
     telegram_token: str = ""
     telegram_username: str = ""
     telegram_commands: bool = True     # answer commands like /capture sent to the bot while the editor is open
+    # notify when the emulator screen stays unchanged this long (or an adb command times out) while a script runs
+    freeze_alert: bool = True
+    freeze_seconds: int = 60
 
     # code inspection: disabled warning codes (diagnostics.WARNING_TYPES); errors cannot be disabled
     disabled_warnings: List[str] = field(default_factory=list)
