@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, Optional
 from ...i18n import tr
 from ..adb_capture import AdbDevice, FrameSource, ScreencapFormat, create_source
 
+from .control import ScriptControl
 from .engine import Engine
 from .errors import FindFailed, ImageNotFound, NotificationError, ScriptError, TextNotFound
 from .geometry import Location, Rect
@@ -41,6 +42,7 @@ class ScriptContext:
     def __init__(self, engine: Engine, notifier: Optional[Notifier] = None, freeze_alert_seconds: float = 0.0):
         self.engine = engine
         self.notifier: Notifier = notifier or NullNotifier()
+        self.control = ScriptControl()
         self.screen: Optional[Screen] = None
         self._extra: Dict[str, Any] = {}
         self._freeze_alert_seconds = freeze_alert_seconds
@@ -78,7 +80,7 @@ class ScriptContext:
             raise ScriptError(tr("open() must be called first"))
         ns: Dict[str, Any] = {
             # objects
-            "SCREEN": s, "SETTINGS": self.engine.settings, "ARGS": dict(args or {}),
+            "SCREEN": s, "SETTINGS": self.engine.settings, "ARGS": dict(args or {}), "CONTROL": self.control,
             # types
             "Pattern": Pattern, "Region": lambda x, y, w, h: Region(Rect(x, y, w, h), self.engine),
             "Location": Location, "Match": Match, "TextMatch": TextMatch, "Key": Key,

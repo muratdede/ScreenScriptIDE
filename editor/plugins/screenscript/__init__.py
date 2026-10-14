@@ -1,5 +1,6 @@
 """SikuliX style visual script API (over ADB)."""
 
+from .control import ScriptControl
 from .engine import Engine, SearchResult
 from .errors import FindFailed, ImageNotFound, NotificationError, ScriptError, TextNotFound
 from .geometry import Location, Rect
@@ -21,7 +22,7 @@ __all__ = [
     "HumanizedInputDriver", "PacedInputDriver", "Key", "Matcher", "MatchResult", "TemplateMatcher",
     "MultiScaleMatcher", "Pattern", "ImagePath", "ImageLibrary", "ImageProvider",
     "OnDemandProvider", "BackgroundProvider", "Region", "Match", "Screen",
-    "ContextBuilder", "ScriptContext", "ScriptRunner", "Settings",
+    "ContextBuilder", "ScriptContext", "ScriptRunner", "Settings", "ScriptControl",
     "TextReader", "TextResult", "TextMatch", "TextNotFound", "OcrUnavailable",
     "RapidOcrReader", "WindowsOcrReader", "ScaledReader", "create_text_reader", "available_backends",
 ]

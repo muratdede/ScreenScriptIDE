@@ -20,6 +20,7 @@ class Command:
     PAUSE = "pause"
     EVALUATE = "evaluate"            # {expression, frame, id}
     STOP = "stop"
+    CONTROL = "control"              # {command}: pause / resume / stop for the script (control channel)
 
 
 class Event:

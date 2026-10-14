@@ -426,7 +426,7 @@
   "Screen: {w}×{h}. Drag to select an area; zoom with Ctrl+wheel.": "Ekran: {w}×{h}. Alan seçmek için sürükleyin; Ctrl+tekerlek ile yakınlaştırın.",
   "screencap data is too short ({size} bytes).": "screencap verisi çok kısa ({size} bayt).",
   "screenrecord could not be started: %s": "screenrecord başlatılamadı: %s",
-  "ScreenScript IDE commands:\n/capture — sends a screenshot of the device screen\n/console — sends the last 20 lines of the console (/console 50: the last 50)\n/help — this message": "ScreenScript IDE komutları:\n/capture — cihaz ekranının görüntüsünü gönderir\n/console — konsolun son 20 satırını gönderir (/console 50: son 50 satır)\n/help — bu mesaj",
+  "ScreenScript IDE commands:\n/capture — sends a screenshot of the device screen\n/console — sends the last 20 lines of the console (/console 50: the last 50)\n/pause — pauses the running script (a bot docks first)\n/resume — continues a paused script\n/stop — stops the running script (a bot docks first)\n/help — this message": "ScreenScript IDE komutları:\n/capture — cihaz ekranının görüntüsünü gönderir\n/console — konsolun son 20 satırını gönderir (/console 50: son 50 satır)\n/pause — çalışan scripti duraklatır (bot önce dock eder)\n/resume — duraklatılmış scripti sürdürür\n/stop — çalışan scripti durdurur (bot önce dock eder)\n/help — bu mesaj",
   "ScreenScript IDE: test notification ✔": "ScreenScript IDE: test bildirimi ✔",
   "Screenshot could not be converted to PNG": "Ekran görüntüsü PNG'ye çevrilemedi",
   "Screenshot could not be taken: {error}": "Ekran görüntüsü alınamadı: {error}",
@@ -622,5 +622,13 @@
   "The emulator screen has not changed for {seconds} s; it may have frozen.": "Emülatör ekranı {seconds} sn'dir değişmedi; donmuş olabilir.",
   "The emulator screen is moving again.": "Emülatör ekranı yeniden hareket ediyor.",
   "Unchanged screen for": "Ekran değişmeden geçen süre",
-  "adb timeout listener failed": "adb zaman aşımı dinleyicisi hata verdi"
+  "adb timeout listener failed": "adb zaman aşımı dinleyicisi hata verdi",
+  "Command received: %s": "Komut alındı: %s",
+  "Control channel could not be opened: %s": "Kontrol kanalı açılamadı: %s",
+  "No script is running.": "Çalışan script yok.",
+  "Reply could not be sent: %s": "Yanıt gönderilemedi: %s",
+  "Telegram /{command} could not be sent: the script is not connected to the control channel\n": "Telegram /{command} iletilemedi: script kontrol kanalına bağlı değil\n",
+  "Telegram {command}: sent to the script": "Telegram {command}: scripte iletildi",
+  "The script is being stopped.": "Script durduruluyor.",
+  "This script does not handle /{command}.": "Bu script /{command} komutunu desteklemiyor."
 }

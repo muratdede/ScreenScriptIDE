@@ -52,6 +52,8 @@ class ScriptSession(QObject):
         self._proc: Optional[QProcess] = None
         self._server: Optional[QTcpServer] = None
         self._socket: Optional[QTcpSocket] = None
+        self._control_server: Optional[QTcpServer] = None    # Telegram /pause /resume /stop -> script
+        self._control_socket: Optional[QTcpSocket] = None
         self._decoder = LineDecoder()
         self._text_decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self._request: Optional[LaunchRequest] = None
@@ -98,6 +100,10 @@ class ScriptSession(QObject):
             if not self._server.listen(QHostAddress.LocalHost, 0):
                 raise RuntimeError(tr("Debug server could not be opened: {error}", error=self._server.errorString()))
             args += ["--debug-port", str(self._server.serverPort())]
+        self._control_server = QTcpServer(self)
+        self._control_server.newConnection.connect(self._on_control_connection)
+        if self._control_server.listen(QHostAddress.LocalHost, 0):
+            args += ["--control-port", str(self._control_server.serverPort())]
 
         proc = QProcess(self)
         proc.setProcessChannelMode(QProcess.MergedChannels)
@@ -165,6 +171,23 @@ class ScriptSession(QObject):
         if self._proc and self._proc.state() == QProcess.Running:
             self._proc.write(text.encode("utf-8"))
 
+    def send_control(self, command: str) -> bool:
+        """Forwards pause / resume / stop to the script's CONTROL (Telegram commands). False if no
+        script is connected to the control channel."""
+        sock = self._control_socket
+        if sock is None or sock.state() != QTcpSocket.ConnectedState:
+            return False
+        sock.write(encode(Command.CONTROL, command=command))
+        sock.flush()
+        return True
+
+    def _on_control_connection(self) -> None:
+        sock = self._control_server.nextPendingConnection()
+        if self._control_socket is not None:
+            sock.abort()
+            return
+        self._control_socket = sock
+
     def _resume(self, command: str) -> None:
         if self._state is SessionState.PAUSED:
             self._send(command)
@@ -206,6 +229,14 @@ class ScriptSession(QObject):
             self._server.close()
             self._server.deleteLater()
             self._server = None
+        if self._control_socket is not None:
+            self._control_socket.abort()
+            self._control_socket.deleteLater()
+            self._control_socket = None
+        if self._control_server is not None:
+            self._control_server.close()
+            self._control_server.deleteLater()
+            self._control_server = None
         if self._proc is not None:
             self._proc.deleteLater()
             self._proc = None

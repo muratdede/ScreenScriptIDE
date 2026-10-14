@@ -6,6 +6,7 @@ from typing import List, Optional
 
 from PySide6.QtCore import QObject, QSettings
 
+from ..i18n import tr
 from .app_settings import AppConfig, create_ide_settings, move_session_files
 from .breakpoints import BreakpointStore
 from .device_input import DeviceInput
@@ -53,7 +54,8 @@ class EditorContext(QObject):
         self.device_input = DeviceInput(self)   # clicker mode of the Screen view
         self.images = ImageRepository(self)
         self.diagnostics = DiagnosticsStore(self, self)   # code inspection (error/warning list)
-        self.telegram = TelegramCommandService(self.grabber, self)   # /capture commands sent to the bot
+        # /capture, /pause ... commands sent to the bot
+        self.telegram = TelegramCommandService(self.grabber, lambda: self.session.is_active, self)
         self.completion: FallbackCompletionProvider = create_default_provider(None, [install_root])
         self.project: Optional[Project] = None
         self.documents: Optional[DocumentService] = None
@@ -63,6 +65,7 @@ class EditorContext(QObject):
         # every component saving/deleting images emits images_changed -> the repository refreshes immediately
         self.bus.images_changed.connect(lambda: self.images.refresh())
         self.telegram.message.connect(self.bus.status_message)
+        self.telegram.control_requested.connect(self._forward_control)   # queued: emitted from its thread
         self.bus.output.connect(self.telegram.record_output)   # /console sends the last lines
         self.bus.app_config_changed.connect(self.telegram.apply_config)
         self.telegram.apply_config(self.app_config)
@@ -97,6 +100,11 @@ class EditorContext(QObject):
             self.grabber.stop_live()
             self.grabber.start_live(config)
         self.bus.app_config_changed.emit(config)
+
+    def _forward_control(self, command: str) -> None:
+        if not self.session.send_control(command):
+            self.bus.output.emit(tr("Telegram /{command} could not be sent: the script is not connected to the "
+                                    "control channel\n", command=command), "err")
 
     def recent_projects(self) -> List[str]:
         value = self.settings.value("recent_projects", [])

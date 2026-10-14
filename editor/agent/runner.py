@@ -18,6 +18,7 @@ from ..core.project import Project, ProjectConfig
 from ..core.protocol import Command, Event
 from ..plugins.screenscript import ScriptRunner
 from .context_factory import ContextFactory
+from .control import ControlChannel
 
 
 def parse_args():
@@ -26,6 +27,7 @@ def parse_args():
     p.add_argument("--script", required=True)
     p.add_argument("--config", help="ProjectConfig JSON file (the project's own is read when empty)")
     p.add_argument("--debug-port", type=int)
+    p.add_argument("--control-port", type=int, help="editor's control channel (Telegram /pause /resume /stop)")
     return p.parse_args()
 
 
@@ -101,6 +103,12 @@ def main() -> int:
     except Exception as e:  # noqa: BLE001
         logging.getLogger("script").error(i18n.tr("Starting failed: %s"), e)
         return 2
+
+    if args.control_port:
+        try:
+            ControlChannel(args.control_port, context)
+        except OSError as e:
+            logging.getLogger("script").warning(i18n.tr("Control channel could not be opened: %s"), e)
 
     runner = ScriptRunner(context)
     script_args = dict(project.config.script_args)

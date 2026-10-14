@@ -2,6 +2,8 @@
 
     /capture  — sends the device's current screenshot as a photo
     /console  — sends the last lines of the console (/console 50: the last 50)
+    /pause, /resume, /stop — forwarded to the running script (its CONTROL); the script decides what
+                to do and reports back itself
     /help     — command list
 
 Only the user from the settings (telegram_username; @name or numeric chat_id) gets answers; messages
@@ -17,7 +19,7 @@ import logging
 import threading
 import time
 from collections import deque
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import cv2
 from PySide6.QtCore import QObject, Signal
@@ -33,6 +35,7 @@ log = logging.getLogger(__name__)
 
 class TelegramCommandService(QObject):
     message = Signal(str)   # for the status bar (emitted from the thread; queued connection)
+    control_requested = Signal(str)   # pause / resume / stop for the running script (emitted from the thread)
 
     POLL_TIMEOUT = 25        # long polling duration (s)
     STALE_SECONDS = 60       # old commands that arrived while the editor was closed are not answered
@@ -40,9 +43,10 @@ class TelegramCommandService(QObject):
     CONSOLE_LINES = 20       # lines sent by /console without a number
     CONSOLE_MAX_LINES = 200  # console lines kept in memory (upper limit of /console N)
 
-    def __init__(self, grabber: ScreenGrabber, parent=None):
+    def __init__(self, grabber: ScreenGrabber, script_running: Callable[[], bool] = lambda: False, parent=None):
         super().__init__(parent)
         self._grabber = grabber
+        self._script_running = script_running
         self._config: Optional[AppConfig] = None
         self._key: Optional[Tuple] = None
         self._stop: Optional[threading.Event] = None
@@ -55,6 +59,9 @@ class TelegramCommandService(QObject):
         return tr("ScreenScript IDE commands:\n"
                   "/capture — sends a screenshot of the device screen\n"
                   "/console — sends the last 20 lines of the console (/console 50: the last 50)\n"
+                  "/pause — pauses the running script (a bot docks first)\n"
+                  "/resume — continues a paused script\n"
+                  "/stop — stops the running script (a bot docks first)\n"
                   "/help — this message")
 
     # ---- console --------------------------------------------------------- #
@@ -151,6 +158,12 @@ class TelegramCommandService(QObject):
             self._send_capture(reply)
         elif command == "/console":
             self._send_console(reply, words[1] if len(words) > 1 else "")
+        elif command in ("/pause", "/resume", "/stop"):
+            if not self._script_running():
+                reply.send_text(tr("No script is running."))
+                return
+            self.control_requested.emit(command[1:])
+            self.message.emit(tr("Telegram {command}: sent to the script", command=command))
         else:
             reply.send_text(self.help_text())
 
